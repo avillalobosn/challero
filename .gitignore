@@ -1,0 +1,24 @@
+# Private collection, credentials, and cached artwork
+/data/
+.env
+.env.*
+!.env.example
+
+# Local environments and generated Python files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local work and deployment state
+/work/
+.vercel/
+/dist/
+/build/
+/duel-static-*/
+*.log
+.DS_Store
