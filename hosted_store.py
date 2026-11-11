@@ -117,12 +117,12 @@ def connection_url(url):
 
 
 @contextmanager
-def transaction(url, write=False):
+def transaction(url, write=False, artwork_write=False):
     with psycopg.connect(connection_url(url), connect_timeout=10, prepare_threshold=None) as connection:
         if write:
             # Serialize admin mutations across instances, including revision and session checks.
             connection.execute('SELECT pg_advisory_xact_lock(6152847001)')
             connection.execute('DELETE FROM duel_runtime WHERE expires_at <= %s', (time.time(),))
-        else:
+        elif not artwork_write:
             connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
         yield PostgresStore(connection)

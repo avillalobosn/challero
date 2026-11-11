@@ -162,7 +162,7 @@ function update() {
 function image(r, cls='') {
     const name = esc(cardName(r));
     return r.info.image
-        ? `<img class="${cls}" src="${esc(r.info.image)}" alt="${name}" loading="lazy">`
+        ? `<img class="${cls}" src="${esc(cls === 'detail-img' ? r.info.image : (r.info.thumbnail || r.info.image))}" alt="${name}" loading="lazy">`
         : `<div class="fallback">◈<br>${name}</div>`;
 }
 

@@ -65,6 +65,25 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(self.call('/api/admin')[1]['rows'][0]['Folder Name'],'Public binder')
         # User endpoint stays redacted even in an admin browser.
         self.assertEqual(len(self.call('/api/collection')[1]['rows']),1)
+    def test_thumbnails_are_small_persistent_and_private(self):
+        from PIL import Image
+        original = io.BytesIO()
+        Image.new('RGB', (800, 1200), 'purple').save(original, 'JPEG')
+        (app.DATA/'assets/1.jpg').write_bytes(original.getvalue())
+        self.assertEqual(self.call('/assets/2-thumb.webp')[0], 404)
+        status, content, _ = self.call('/assets/1-thumb.webp')
+        self.assertEqual(status, 200)
+        thumbnail = app.DATA/'assets/1-thumb.webp'
+        self.assertTrue(thumbnail.is_file())
+        with Image.open(thumbnail) as image:
+            self.assertEqual(image.format, 'WEBP')
+            self.assertLessEqual(image.width, 240)
+            self.assertLessEqual(image.height, 350)
+        first = thumbnail.read_bytes()
+        self.call('/assets/1-thumb.webp')
+        self.assertEqual(first, thumbnail.read_bytes())
+        self.assertLess(len(first), len(original.getvalue()))
+
     def test_raw_files_and_private_assets_blocked(self):
         for path in ['/collection.js','/cards.js','/data/collection.json','/data/auth.json','/server.py','/../data/collection.json','/assets/2.jpg']:
             self.assertEqual(self.call(path)[0],404,path)

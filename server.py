@@ -22,6 +22,16 @@ INFO_FIELDS = ['id','type','desc','race','attribute','level','atk','def','linkva
 MAX_UPLOAD = 12 * 1024 * 1024
 CATALOG_TTL = 2 * 86400
 
+def thumbnail_image(original):
+    from PIL import Image
+    with Image.open(io.BytesIO(original)) as image:
+        image = image.convert('RGB')
+        image.thumbnail((240, 350), Image.Resampling.LANCZOS)
+        output = io.BytesIO()
+        image.save(output, format='WEBP', quality=65, method=4)
+        return output.getvalue()
+
+
 def read(name, default=None):
     if store := HOSTED_STORE.get():
         return store.read(name, default)
@@ -131,6 +141,8 @@ def collection_payload(admin=False):
                 exists = image in hosted_images if store else (DATA / image).is_file()
                 if not exists:
                     info.pop('image', None)
+                else:
+                    info['thumbnail'] = image.removesuffix('.jpg') + '-thumb.webp'
             item.update(_id=i, info=info, public_price=public_price(r, state['settings']))
             result.append(item)
         response = {'rows':result, 'currency':state['settings']['currency'], 'revision':state['revision'], 'admin':admin}
@@ -259,20 +271,35 @@ class ArchiveRoutes:
         if path=='/api/admin': return self.send(200,collection_payload(True)) if admin else self.send(401,{'error':'Admin login required.'})
         if path.startswith('/assets/'):
             file=path.removeprefix('/assets/')
-            if not file.endswith('.jpg') or not file[:-4].isdigit(): return self.send(404,{'error':'Not found'})
+            thumbnail = file.endswith('-thumb.webp')
+            card_id = file.removesuffix('-thumb.webp') if thumbnail else file.removesuffix('.jpg')
+            if not card_id.isascii() or not card_id.isdigit() or not (thumbnail or file.endswith('.jpg')): return self.send(404,{'error':'Not found'})
             state = read('collection.json')
             visible = set(state['settings']['visible_folders'])
             cards = read('cache.json', {'cards': {}})['cards']
-            asset_path = path.lstrip('/')
+            asset_path = f'assets/{card_id}.jpg'
             if not any(cards.get(r['Card Name'], {}).get('image') == asset_path
                        for r in state['rows'] if admin or r['Folder Name'] in visible):
                 return self.send(404, {'error': 'Not found'})
             if store := HOSTED_STORE.get():
-                image = store.image(asset_path)
+                image = store.image(path.lstrip('/') if thumbnail else asset_path)
+                if image is None and thumbnail:
+                    original = store.image(asset_path)
+                    if original is not None:
+                        image = thumbnail_image(original)
+                        store.save_image(path.lstrip('/'), image)
                 if image is None:
                     return self.send(404, {'error': 'Not found'})
-                return self.send(200, image, content_type='image/jpeg')
+                return self.send(200, image, content_type='image/webp' if thumbnail else 'image/jpeg')
             target = DATA / asset_path
+            if thumbnail:
+                thumb_target = DATA / path.lstrip('/')
+                if not thumb_target.is_file():
+                    if not target.is_file(): return self.send(404, {'error': 'Not found'})
+                    content = thumbnail_image(target.read_bytes())
+                    with LOCK:
+                        thumb_target.write_bytes(content)
+                target = thumb_target
         elif path in ['/','/admin','/admin/','/index.html']: target=ROOT/'public/index.html'
         elif path in ['/app.js','/style.css']: target=ROOT/'public'/path[1:]
         else: return self.send(404,{'error':'Not found'})

@@ -46,7 +46,8 @@ def hosted_request(database_url, routes, path, body=None, client_ip=None):
     from psycopg import Error
 
     try:
-        with transaction(database_url, write=body is not None) as store:
+        with transaction(database_url, write=body is not None,
+                         artwork_write=path.startswith('/assets/') and path.endswith('-thumb.webp')) as store:
             token = server.HOSTED_STORE.set(store)
             try:
                 return routes.get(path) if body is None else routes.post(path, body, client_ip)
