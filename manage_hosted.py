@@ -4,7 +4,7 @@ import os
 
 import psycopg
 
-from hosted_store import PostgresStore, SCHEMA
+from hosted_store import PostgresStore, SCHEMA, connection_url, DatabaseURLConfigurationError
 import server
 
 
@@ -51,19 +51,45 @@ def refresh(connection, force):
         server.HOSTED_STORE.reset(token)
 
 
+def check(connection):
+    connection.execute('SELECT 1')
+    missing = []
+    for table in ('duel_documents', 'duel_artwork', 'duel_runtime'):
+        if connection.execute('SELECT to_regclass(%s)', (table,)).fetchone()[0] is None:
+            missing.append(table)
+    if missing:
+        return 'Connected. Missing tables: ' + ', '.join(missing) + '. Run migrate against this database.'
+    store = PostgresStore(connection)
+    collection = store.read('collection.json')
+    auth = store.read('auth.json')
+    if collection is None or auth is None:
+        return 'Connected. Tables exist, but collection or admin credentials are missing.'
+    return f"Connected. Migration complete. Collection contains {len(collection['rows'])} entries."
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['migrate', 'refresh'])
+    parser.add_argument('action', choices=['migrate', 'refresh', 'check'])
     parser.add_argument('--force', action='store_true', help='Run a refresh even when none is queued.')
     args = parser.parse_args()
     url = os.getenv('DATABASE_URL')
     if not url:
         parser.error('Set DATABASE_URL before running this command.')
     try:
-        with psycopg.connect(url, connect_timeout=10) as connection:
-            message = migrate(connection) if args.action == 'migrate' else refresh(connection, args.force)
+        with psycopg.connect(connection_url(url), connect_timeout=10, prepare_threshold=None) as connection:
+            if args.action == 'check':
+                message = check(connection)
+            elif args.action == 'migrate':
+                message = migrate(connection)
+            else:
+                message = refresh(connection, args.force)
+    except DatabaseURLConfigurationError as error:
+        raise SystemExit(str(error)) from None
     except psycopg.Error as error:
-        raise SystemExit(f'PostgreSQL operation failed ({error.sqlstate or type(error).__name__}).') from None
+        hint = ''
+        if isinstance(error, psycopg.ProgrammingError) and not error.sqlstate:
+            hint = ' Check that DATABASE_URL is a PostgreSQL URI, with the password URL-encoded and no surrounding quotes in its value.'
+        raise SystemExit(f'PostgreSQL operation failed ({error.sqlstate or type(error).__name__}).{hint}') from None
     print(message)
 
 

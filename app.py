@@ -1,6 +1,7 @@
 """FastAPI entry point for Duel Archive's local backend."""
 from contextlib import asynccontextmanager
 import os
+import logging
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
@@ -41,7 +42,7 @@ HOSTED_UPLOAD_LIMIT = 4_000_000
 
 
 def hosted_request(database_url, routes, path, body=None, client_ip=None):
-    from hosted_store import transaction
+    from hosted_store import transaction, DatabaseURLConfigurationError
     from psycopg import Error
 
     try:
@@ -51,7 +52,14 @@ def hosted_request(database_url, routes, path, body=None, client_ip=None):
                 return routes.get(path) if body is None else routes.post(path, body, client_ip)
             finally:
                 server.HOSTED_STORE.reset(token)
-    except Error:
+    except DatabaseURLConfigurationError:
+        logging.getLogger(__name__).error('DATABASE_URL configuration is invalid.')
+        return routes.send(503, {'error': 'Hosted database connection URL is invalid.'})
+    except Error as error:
+        logging.getLogger(__name__).error(
+            'Hosted storage failure: type=%s sqlstate=%s',
+            type(error).__name__, error.sqlstate or 'none',
+        )
         return routes.send(503, {'error': 'Hosted storage is unavailable.'})
 
 

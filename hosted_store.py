@@ -1,6 +1,8 @@
 """PostgreSQL storage for the hosted FastAPI entry point."""
 from contextlib import contextmanager
 import time
+import re
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit, unquote
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -75,9 +77,48 @@ class PostgresStore:
         self.connection.execute('DELETE FROM duel_runtime WHERE kind = %s AND key = %s', (kind, key))
 
 
+class DatabaseURLConfigurationError(ValueError):
+    """A credential-free explanation of an invalid connection URL."""
+
+
+def connection_url(url):
+    if url != url.strip():
+        raise DatabaseURLConfigurationError('DATABASE_URL contains leading or trailing whitespace.')
+    if url.startswith(('"', "'")) or url.endswith(('"', "'")):
+        raise DatabaseURLConfigurationError('DATABASE_URL includes literal quotes. Remove them from the stored value.')
+    if url.startswith('DATABASE_URL='):
+        raise DatabaseURLConfigurationError('DATABASE_URL contains the variable assignment. Store only the connection URL.')
+    if not url.startswith(('postgresql://', 'postgres://')):
+        raise DatabaseURLConfigurationError('DATABASE_URL must start with postgresql:// or postgres://. Paste the full PostgreSQL connection URL as its value.')
+    try:
+        parts = urlsplit(url)
+        _ = parts.port
+    except ValueError:
+        raise DatabaseURLConfigurationError('DATABASE_URL has an invalid host or port. URL-encode special characters in the password.') from None
+    if not parts.hostname:
+        raise DatabaseURLConfigurationError('DATABASE_URL is missing its database hostname.')
+    if parts.fragment:
+        raise DatabaseURLConfigurationError('DATABASE_URL contains a # fragment. Encode # in the password as %23.')
+    if re.search(r'%(?![0-9a-fA-F]{2})', url):
+        raise DatabaseURLConfigurationError('DATABASE_URL contains an invalid percent escape. Encode a literal % as %25.')
+    if unquote(parts.password or '').upper() in ('[YOUR-PASSWORD]', 'YOUR_PASSWORD', 'YOUR-PASSWORD'):
+        raise DatabaseURLConfigurationError('Replace the password placeholder with your actual Supabase database password.')
+
+    # Integration URLs may include options meant for Prisma or JavaScript clients.
+    client_options = {'pgbouncer', 'connection_limit', 'pool_timeout', 'workaround', 'supa'}
+    query = [(name, value) for name, value in parse_qsl(parts.query, keep_blank_values=True)
+             if name not in client_options]
+    result = urlunsplit(parts._replace(query=urlencode(query)))
+    try:
+        psycopg.conninfo.conninfo_to_dict(result)
+    except psycopg.ProgrammingError:
+        raise DatabaseURLConfigurationError('DATABASE_URL has an unsupported PostgreSQL option or malformed URI. Copy the PostgreSQL URI from Supabase Connect.') from None
+    return result
+
+
 @contextmanager
 def transaction(url, write=False):
-    with psycopg.connect(url, connect_timeout=10) as connection:
+    with psycopg.connect(connection_url(url), connect_timeout=10, prepare_threshold=None) as connection:
         if write:
             # Serialize admin mutations across instances, including revision and session checks.
             connection.execute('SELECT pg_advisory_xact_lock(6152847001)')
