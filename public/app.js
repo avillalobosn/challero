@@ -1,5 +1,5 @@
 const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let rows=[], folders=[], payload; const adminRoute=location.pathname==='/admin';
+let rows=[], folders=[], payload; const adminRoute=location.pathname.replace(/\/+$/, '')==='/admin';
 async function request(path,body){const r=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json','X-Requested-With':'DuelArchive'}:{},body:body?JSON.stringify(body):undefined});const data=await r.json();if(!r.ok){const error=new Error(data.error||'Request failed');error.status=r.status;throw error;}return data;}
 function showLogin(){rows=[];folders=[];if($('detail').open)$('detail').close();$('detailContent').innerHTML='';$('folders').innerHTML='';$('allCount').textContent='';$('sidebarFolderCount').textContent='';$('folderHeading').hidden=true;$('folders').hidden=true;$('folderStat').hidden=true;$('adminPanel').innerHTML='';$('login').hidden=false;$('collectionView').hidden=true;$('adminPanel').hidden=true;}
 function notify(text,error=false){$('message').hidden=false;$('message').textContent=text;$('message').classList.toggle('error',error)}

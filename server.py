@@ -273,7 +273,7 @@ class ArchiveRoutes:
                     return self.send(404, {'error': 'Not found'})
                 return self.send(200, image, content_type='image/jpeg')
             target = DATA / asset_path
-        elif path in ['/','/admin','/index.html']: target=ROOT/'public/index.html'
+        elif path in ['/','/admin','/admin/','/index.html']: target=ROOT/'public/index.html'
         elif path in ['/app.js','/style.css']: target=ROOT/'public'/path[1:]
         else: return self.send(404,{'error':'Not found'})
         if not target.is_file(): return self.send(404,{'error':'Not found'})

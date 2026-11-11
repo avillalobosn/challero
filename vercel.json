@@ -5,5 +5,15 @@
       "excludeFiles": "{data/**,work/**,.venv/**,venv/**,__pycache__/**,**/__pycache__/**,tests/**,.env*}",
       "includeFiles": "public/**"
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/admin",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/admin/",
+      "destination": "/index.html"
+    }
+  ]
 }
