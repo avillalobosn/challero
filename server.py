@@ -26,9 +26,9 @@ def thumbnail_image(original):
     from PIL import Image
     with Image.open(io.BytesIO(original)) as image:
         image = image.convert('RGB')
-        image.thumbnail((240, 350), Image.Resampling.LANCZOS)
+        image.thumbnail((200, 292), Image.Resampling.LANCZOS)
         output = io.BytesIO()
-        image.save(output, format='WEBP', quality=65, method=4)
+        image.save(output, format='WEBP', quality=40, method=4)
         return output.getvalue()
 
 
@@ -142,7 +142,7 @@ def collection_payload(admin=False):
                 if not exists:
                     info.pop('image', None)
                 else:
-                    info['thumbnail'] = image.removesuffix('.jpg') + '-thumb.webp'
+                    info['thumbnail'] = image.removesuffix('.jpg') + '-thumb-v2.webp'
             item.update(_id=i, info=info, public_price=public_price(r, state['settings']))
             result.append(item)
         response = {'rows':result, 'currency':state['settings']['currency'], 'revision':state['revision'], 'admin':admin}
@@ -271,8 +271,8 @@ class ArchiveRoutes:
         if path=='/api/admin': return self.send(200,collection_payload(True)) if admin else self.send(401,{'error':'Admin login required.'})
         if path.startswith('/assets/'):
             file=path.removeprefix('/assets/')
-            thumbnail = file.endswith('-thumb.webp')
-            card_id = file.removesuffix('-thumb.webp') if thumbnail else file.removesuffix('.jpg')
+            thumbnail = file.endswith('-thumb-v2.webp')
+            card_id = file.removesuffix('-thumb-v2.webp') if thumbnail else file.removesuffix('.jpg')
             if not card_id.isascii() or not card_id.isdigit() or not (thumbnail or file.endswith('.jpg')): return self.send(404,{'error':'Not found'})
             state = read('collection.json')
             visible = set(state['settings']['visible_folders'])

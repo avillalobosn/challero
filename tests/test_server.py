@@ -70,17 +70,17 @@ class ArchiveTests(unittest.TestCase):
         original = io.BytesIO()
         Image.new('RGB', (800, 1200), 'purple').save(original, 'JPEG')
         (app.DATA/'assets/1.jpg').write_bytes(original.getvalue())
-        self.assertEqual(self.call('/assets/2-thumb.webp')[0], 404)
-        status, content, _ = self.call('/assets/1-thumb.webp')
+        self.assertEqual(self.call('/assets/2-thumb-v2.webp')[0], 404)
+        status, content, _ = self.call('/assets/1-thumb-v2.webp')
         self.assertEqual(status, 200)
-        thumbnail = app.DATA/'assets/1-thumb.webp'
+        thumbnail = app.DATA/'assets/1-thumb-v2.webp'
         self.assertTrue(thumbnail.is_file())
         with Image.open(thumbnail) as image:
             self.assertEqual(image.format, 'WEBP')
-            self.assertLessEqual(image.width, 240)
-            self.assertLessEqual(image.height, 350)
+            self.assertLessEqual(image.width, 200)
+            self.assertLessEqual(image.height, 292)
         first = thumbnail.read_bytes()
-        self.call('/assets/1-thumb.webp')
+        self.call('/assets/1-thumb-v2.webp')
         self.assertEqual(first, thumbnail.read_bytes())
         self.assertLess(len(first), len(original.getvalue()))
 
