@@ -134,6 +134,7 @@ def collection_payload(admin=False):
             item = dict(r) if admin else {k:r[k] for k in PUBLIC_FIELDS}
             info = dict(cache['cards'].get(r['Card Name'], {}))
             item['spanish_name'] = spanish_names.get(str(info.get('id')), '')
+            item['copies'] = int(r.get('Quantity') or 0)
             item['available_to_trade'] = int(r.get('Trade Quantity') or 0) > 0
             pricing = info.pop('pricing', {})
             if admin: item['reference_prices'] = reference_prices(r, pricing)

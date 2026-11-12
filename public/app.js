@@ -16,7 +16,7 @@ const translations = {
     'English':'Inglés', 'Spanish':'Español', '1st Edition':'1.ª edición', 'Unlimited':'Ilimitada',
     'NearMint':'Casi nueva', 'LightlyPlayed':'Poco usada', 'ModeratelyPlayed':'Uso moderado',
     'HeavilyPlayed':'Muy usada', 'Damaged':'Dañada', 'Available versions':'Versiones disponibles',
-    'Show images':'Mostrar imágenes', 'Card details':'Detalles de la carta', 'View':'Ver', 'cards':'cartas'
+    'Copies':'Copias', 'Show images':'Mostrar imágenes', 'Card details':'Detalles de la carta', 'View':'Ver', 'cards':'cartas'
 };
 const t = text => language === 'es' ? translations[text] || text : text;
 const cardName = r => language === 'es' && r.spanish_name ? r.spanish_name : r['Card Name'];
@@ -56,6 +56,7 @@ function groupCards(items) {
         const lowest = [...prices].reduce((min, value) => Math.min(min, value), Infinity);
         return {
             ...first,
+            copies: variants.reduce((sum, r) => sum + Number(r.copies || 0), 0),
             public_price: prices.size ? lowest : null,
             price_varies: prices.size > 1 || (prices.size > 0 && variants.some(r => r.public_price == null)),
             rarities: [...new Set(variants.map(r => r.Rarity))]
@@ -181,7 +182,7 @@ function render() {
         const badge = payload.admin ? `<span class="quantity">×${esc(r.Quantity)}</span>` : '';
         const location = payload.admin ? `<div class="card-folder">▱ ${esc(r['Folder Name'])}</div>` : '';
         const rarities = (r.rarities || [r.Rarity]).map(rarityLabel).join(' · ');
-        return `<button class="card" data-id="${r._id}" aria-label="${t('View')} ${name}, ${esc(r['Card Number'])}">${showImages ? `<div class="art">${image(r)}${badge}</div>` : badge}<h3 title="${name}">${name}</h3><div class="card-meta"><span>${esc(r['Card Number'])}</span><span class="rarity">${esc(rarities)}</span></div>${location}<div class="offer">${esc(offer(r))}</div></button>`;
+        return `<button class="card" data-id="${r._id}" aria-label="${t('View')} ${name}, ${esc(r['Card Number'])}">${showImages ? `<div class="art">${image(r)}${badge}</div>` : badge}<h3 title="${name}">${name}</h3><div class="card-meta"><span>${esc(r['Card Number'])}</span><span class="rarity">${esc(rarities)}</span></div>${location}${!showImages ? `<span class="copy-count">${t('Copies')}: ${num(payload.admin ? r.Quantity : r.copies)}</span>` : ''}<div class="offer">${esc(offer(r))}</div></button>`;
     }).join('');
     $('page').textContent = payload.admin
         ? `${filtered.length?(page-1)*pageSize+1:0}–${Math.min(page*pageSize,filtered.length)} of ${num(filtered.length)}`

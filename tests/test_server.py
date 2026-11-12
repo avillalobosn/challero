@@ -42,6 +42,7 @@ class ArchiveTests(unittest.TestCase):
         status,data,h=self.call('/api/collection');self.assertEqual(status,200);self.assertEqual(len(data['rows']),1)
         row=data['rows'][0];self.assertEqual(row['public_price'],'8.67')
         self.assertTrue(row['available_to_trade'])
+        self.assertEqual(row['copies'], 2)
         for k in ['Folder Name','Quantity','Trade Quantity','LOW','MID','MARKET','Price Bought','Date Bought']:self.assertNotIn(k,row)
         self.assertNotIn('Public binder',json.dumps(data));self.assertNotIn('Secret',json.dumps(data));self.assertNotIn('settings',data);self.assertEqual(h['Cache-Control'],'no-store')
     def test_reference_prices_admin_only_and_csv_untouched(self):
