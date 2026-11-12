@@ -10,3 +10,13 @@
 #language { padding: .35rem .65rem; }
 .public-variant { border: 1px solid #374a3d; border-radius: 8px; padding: 12px; }
 .card-meta { flex-wrap: wrap; }
+
+/* Compact collection view; omit image elements entirely until requested. */
+.grid.text-view{display:flex;flex-direction:column;gap:8px}
+.text-view .card{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,2fr) minmax(100px,1fr);gap:12px;align-items:center;padding:14px;text-align:left;position:relative}
+.text-view .card h3{margin:0;white-space:normal}
+.text-view .card-meta{display:flex;flex-wrap:wrap;gap:8px;margin:0}
+.text-view .offer{margin:0;text-align:right}
+.text-view .quantity{position:static;grid-column:1/-1;justify-self:start}
+.text-view .card-folder{grid-column:1/-1;margin:0}
+@media(max-width:650px){.text-view .card{grid-template-columns:minmax(0,1fr) auto}.text-view .card h3{grid-column:1/-1}.text-view .card-meta{font-size:11px}.filterline{flex-wrap:wrap;gap:12px}}

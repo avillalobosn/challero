@@ -4,6 +4,7 @@ async function request(path,body){const r=await fetch(path,{method:body?'POST':'
 function showLogin(){rows=[];folders=[];if($('detail').open)$('detail').close();$('detailContent').innerHTML='';$('folders').innerHTML='';$('allCount').textContent='';$('sidebarFolderCount').textContent='';$('folderHeading').hidden=true;$('folders').hidden=true;$('folderStat').hidden=true;$('adminPanel').innerHTML='';$('login').hidden=false;$('collectionView').hidden=true;$('adminPanel').hidden=true;}
 function notify(text,error=false){$('message').hidden=false;$('message').textContent=text;$('message').classList.toggle('error',error)}
 async function load(){try{payload=await request(adminRoute?'/api/admin':'/api/collection');$('login').hidden=true;$('collectionView').hidden=false;rows=payload.rows;folders=payload.admin?[...new Set(rows.map(r=>r['Folder Name']))].sort((a,b)=>a.localeCompare(b)):[];initialize();if(adminRoute)renderAdmin();else{$('viewLink').href='/admin';}}catch(e){if(adminRoute&&e.status===401)showLogin();else notify(e.message,true);}}
+let showImages=false;
 let folder='',page=1,filtered=[],lastFocus;const pageSize=30;
 let language = !adminRoute && globalThis.localStorage?.getItem('duel-language') === 'es' ? 'es' : 'en';
 const translations = {
@@ -15,7 +16,7 @@ const translations = {
     'English':'Inglés', 'Spanish':'Español', '1st Edition':'1.ª edición', 'Unlimited':'Ilimitada',
     'NearMint':'Casi nueva', 'LightlyPlayed':'Poco usada', 'ModeratelyPlayed':'Uso moderado',
     'HeavilyPlayed':'Muy usada', 'Damaged':'Dañada', 'Available versions':'Versiones disponibles',
-    'Card details':'Detalles de la carta', 'View':'Ver', 'cards':'cartas'
+    'Show images':'Mostrar imágenes', 'Card details':'Detalles de la carta', 'View':'Ver', 'cards':'cartas'
 };
 const t = text => language === 'es' ? translations[text] || text : text;
 const cardName = r => language === 'es' && r.spanish_name ? r.spanish_name : r['Card Name'];
@@ -166,7 +167,12 @@ function image(r, cls='') {
         : `<div class="fallback">◈<br>${name}</div>`;
 }
 
+$('showImages').onchange = () => { showImages = $('showImages').checked; render(); };
+
 function render() {
+    $('showImagesLabel').textContent = t('Show images');
+    $('showImages').checked = showImages;
+    $('grid').classList.toggle('text-view', !showImages);
     $('resultCount').textContent = payload.admin ? `${num(filtered.length)} entries` : '';
     $('scope').textContent = payload.admin ? (folder || `Across ${folders.length} visible folders`) : t('Browse the collection');
     $('empty').hidden = !!filtered.length;
@@ -175,7 +181,7 @@ function render() {
         const badge = payload.admin ? `<span class="quantity">×${esc(r.Quantity)}</span>` : '';
         const location = payload.admin ? `<div class="card-folder">▱ ${esc(r['Folder Name'])}</div>` : '';
         const rarities = (r.rarities || [r.Rarity]).map(rarityLabel).join(' · ');
-        return `<button class="card" data-id="${r._id}" aria-label="${t('View')} ${name}, ${esc(r['Card Number'])}"><div class="art">${image(r)}${badge}</div><h3 title="${name}">${name}</h3><div class="card-meta"><span>${esc(r['Card Number'])}</span><span class="rarity">${esc(rarities)}</span></div>${location}<div class="offer">${esc(offer(r))}</div></button>`;
+        return `<button class="card" data-id="${r._id}" aria-label="${t('View')} ${name}, ${esc(r['Card Number'])}">${showImages ? `<div class="art">${image(r)}${badge}</div>` : badge}<h3 title="${name}">${name}</h3><div class="card-meta"><span>${esc(r['Card Number'])}</span><span class="rarity">${esc(rarities)}</span></div>${location}<div class="offer">${esc(offer(r))}</div></button>`;
     }).join('');
     $('page').textContent = payload.admin
         ? `${filtered.length?(page-1)*pageSize+1:0}–${Math.min(page*pageSize,filtered.length)} of ${num(filtered.length)}`
