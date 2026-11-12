@@ -96,7 +96,6 @@ function localizeVisitor() {
         ['#creditsLabel','Card data & artwork:','Datos e imágenes:'],
         ['#artNote','· Representative card artwork.','· Imagen representativa de la carta.'],
         ['#viewLink','ADMIN SIGN IN →','ACCESO DE ADMINISTRACIÓN →'],
-        ['#tradeLabel','Available to trade','Disponible para intercambio'],
         ['#sort option[value="name"]','Name: A–Z','Nombre: A–Z'],
         ['#sort option[value="value"]','Price: high–low','Precio: de mayor a menor']
     ]) {
@@ -139,8 +138,8 @@ if(folder&&!folders.includes(folder))folder='';selectFolder(folder);
 }
 function selectFolder(f){folder=payload.admin?f:'';f=folder;document.querySelectorAll('.folder').forEach(b=>b.classList.toggle('active',b.id==='all'?!f:folders[+b.dataset.folder]===f));$('title').textContent=f||t('All cards');$('breadcrumb').textContent=(f||t('All cards')).toUpperCase();update()}
 
-['search','type','set','rarity','sort','trade'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',update));
-$('reset').onclick=()=>{['search','type','set','rarity'].forEach(id=>$(id).value='');$('trade').checked=false;$('sort').value='name';selectFolder('')};
+['search','type','set','rarity','sort'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',update));
+$('reset').onclick=()=>{['search','type','set','rarity'].forEach(id=>$(id).value='');$('sort').value='name';selectFolder('')};
 function update() {
     page = 1;
     const query = normalize($('search').value);
@@ -149,7 +148,6 @@ function update() {
         (!$('set').value || setName(r) === $('set').value) &&
         (!$('rarity').value || r.Rarity === $('rarity').value) &&
         (!$('type').value || (r.info.type || '').includes($('type').value)) &&
-        (!$('trade').checked || r.available_to_trade) &&
         [r['Card Name'], r.spanish_name, setName(r), r['Card Number'], r['Set Code']].some(value => normalize(value).includes(query))
     );
     filtered = payload.admin ? items : groupCards(items);
