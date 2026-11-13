@@ -8,7 +8,7 @@ let showImages=false;
 let folder='',page=1,filtered=[],lastFocus;const pageSize=30;
 let language = !adminRoute && globalThis.localStorage?.getItem('duel-language') === 'es' ? 'es' : 'en';
 const translations = {
-    'All cards':'Todas las cartas', 'All sets':'Todas las colecciones', 'All rarities':'Todas las rarezas',
+    'All languages':'Todos los idiomas', 'All cards':'Todas las cartas', 'All sets':'Todas las colecciones', 'All rarities':'Todas las rarezas',
     'All card types':'Todos los tipos', 'Monster':'Monstruo', 'Spell':'Mágica', 'Trap':'Trampa',
     'Browse the collection':'Explora la colección', 'Ask for price':'Consultar precio', 'From':'Desde',
     'Set':'Colección', 'Card number':'Número de carta', 'Rarity':'Rareza', 'Condition':'Estado',
@@ -38,7 +38,7 @@ const rarityNames = {
     DRPR:['Duel Terminal Rare Parallel Rare','Rara paralela Duel Terminal'],
     SHR:['Shatterfoil Rare','Rara Shatterfoil'], EmUR:['Embossed Ultra Rare','Ultra rara en relieve']
 };
-const rarityLabel = code => rarityNames[code] ? rarityNames[code][language === 'es' ? 1 : 0] + ' (' + code + ')' : code;
+const rarityLabel = code => rarityNames[code] ? rarityNames[code][0] + ' (' + code + ')' : code;
 const normalize = value => String(value ?? '').normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().trim();
 const setName = r => r['Set Name'] || r['Set Code'];
 const groupKey = r => JSON.stringify([normalize(r['Card Name']), normalize(r['Set Code'] || setName(r)) || normalize(r['Card Number'])]);
@@ -123,7 +123,7 @@ $('language').onclick = () => {
 
 function initialize(){
 $('folderHeading').hidden=!payload.admin;$('folders').hidden=!payload.admin;$('folderStat').hidden=!payload.admin;$('stats').hidden=!payload.admin;
-restoreSearch();
+if (!restoredSearch && !adminRoute) { const lang=new URLSearchParams(location.search || '').get('lang'); if (['en','es'].includes(lang)) language=lang; }
 localizeVisitor();
 if (payload.admin) {
 $('copies').textContent=num(rows.reduce((s,r)=>s+Number(r.Quantity),0));$('unique').textContent=num(new Set(rows.map(r=>r['Card Name'])).size);$('entries').textContent=num(rows.length);$('folderCount').textContent=folders.length;}
@@ -135,18 +135,22 @@ fillOptions('set',[...new Set(rows.map(setName).filter(Boolean))].sort().map(nam
 $('folders').innerHTML=folders.map((f,i)=>`<button class="folder" data-folder="${i}">▱ <span>${esc(f)}</span><b>${rows.filter(r=>r['Folder Name']===f).length}</b></button>`).join('');
 $('folders').onclick=e=>{const b=e.target.closest('button');if(b)selectFolder(folders[+b.dataset.folder])};$('all').onclick=()=>selectFolder('');
 fillOptions('rarity',[...new Set(rows.map(r=>r.Rarity).filter(Boolean))].map(code=>[code,rarityLabel(code)]).sort((a,b)=>a[1].localeCompare(b[1],language)),'All rarities');
+fillOptions('cardLanguage',[...new Set(rows.map(r=>r.Language).filter(Boolean))].sort().map(value=>[value,t(value)]),'All languages');
+$('cardLanguage').setAttribute?.('aria-label',language==='es'?'Idioma de la carta':'Card language');
+restoreSearch();
 if(folder&&!folders.includes(folder))folder='';selectFolder(folder);
 }
 function selectFolder(f){folder=payload.admin?f:'';f=folder;document.querySelectorAll('.folder').forEach(b=>b.classList.toggle('active',b.id==='all'?!f:folders[+b.dataset.folder]===f));$('title').textContent=f||t('All cards');$('breadcrumb').textContent=(f||t('All cards')).toUpperCase();update()}
 
-['search','type','set','rarity','sort'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',update));
-$('reset').onclick=()=>{['search','type','set','rarity'].forEach(id=>$(id).value='');$('sort').value='name';selectFolder('')};
+['search','type','set','rarity','cardLanguage','sort'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',update));
+$('reset').onclick=()=>{['search','type','set','rarity','cardLanguage'].forEach(id=>$(id).value='');$('sort').value='name';selectFolder('')};
 function update() {
     page = 1;
     const query = normalize($('search').value);
     const items = rows.filter(r =>
         (!folder || r['Folder Name'] === folder) &&
         (!$('set').value || setName(r) === $('set').value) &&
+        (!$('cardLanguage').value || r.Language === $('cardLanguage').value) &&
         (!$('rarity').value || r.Rarity === $('rarity').value) &&
         (!$('type').value || (r.info.type || '').includes($('type').value)) &&
         [r['Card Name'], r.spanish_name, setName(r), r['Card Number'], r['Set Code']].some(value => normalize(value).includes(query))
@@ -170,7 +174,7 @@ function restoreSearch() {
     if (adminRoute || restoredSearch) return;
     restoredSearch = true;
     const params = new URLSearchParams(location.search || '');
-    for (const [id, key] of [['search','q'],['set','set'],['rarity','rarity'],['type','type'],['sort','sort']]) {
+    for (const [id, key] of [['search','q'],['set','set'],['rarity','rarity'],['cardLanguage','cardLanguage'],['type','type'],['sort','sort']]) {
         const value = params.get(key);
         if (value !== null && (id === 'search' || [...$(id).options].some(o => o.value === value && !o.disabled))) $(id).value = value;
     }
@@ -180,7 +184,7 @@ function restoreSearch() {
 function searchURL() {
     const url = new URL(location.href);
     url.search = ''; url.hash = '';
-    for (const [id,key] of [['search','q'],['set','set'],['rarity','rarity'],['type','type'],['sort','sort']]) {
+    for (const [id,key] of [['search','q'],['set','set'],['rarity','rarity'],['cardLanguage','cardLanguage'],['type','type'],['sort','sort']]) {
         const value = $(id).value;
         if (value && !(id === 'sort' && value === 'name')) url.searchParams.set(key,value);
     }

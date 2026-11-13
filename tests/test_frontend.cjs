@@ -4,7 +4,7 @@ const script=fs.readFileSync('public/app.js','utf8');
 async function fixture(admin=false,denied=false,search="",storage=new Map()){
  let copied="", replaced="";
  const elements=new Map();
- function element(id){if(!elements.has(id))elements.set(id,{id,value:id==='sort'?'name':'',textContent:'',innerHTML:'',hidden:true,checked:false,open:false,options:[{value:'name'},{value:'value'},{value:'Fixture set'},{value:'SR'},{value:'Monster'}],classList:{toggle(){}},add(){},addEventListener(){},scrollIntoView(){},focus(){},showModal(){this.open=true},close(){this.open=false}});return elements.get(id)}
+ function element(id){if(!elements.has(id))elements.set(id,{id,value:id==='sort'?'name':'',textContent:'',innerHTML:'',hidden:true,checked:false,open:false,options:[{value:'name'},{value:'value'},{value:'Fixture set'},{value:'SR'},{value:'Monster'},{value:'Spanish'},{value:'English'}],classList:{toggle(){}},add(){},addEventListener(){},scrollIntoView(){},focus(){},showModal(){this.open=true},close(){this.open=false}});return elements.get(id)}
  const row={copies:2,spanish_name:'Carta de prueba','Folder Name':'Visible folder','Quantity':'2','Trade Quantity':'0','Card Name':'<Test Card>','Set Name':'Fixture set','Card Number':'TEST-EN001','Set Code':'TEST','Rarity':'SR','Language':'English','Condition':'NearMint','Printing':'1st Edition',_id:7,info:{image:'assets/1.jpg',thumbnail:'assets/1-thumb-v2.webp',type:'Effect Monster',desc:'Fixture effect'},public_price:null};
  row.reference_prices={match:'matched',set_price:'77.88',fetched_at:1,stale:true,vendors:[{vendor:'TCGplayer',amount:'66.55',currency:'USD'}]};
  if(admin)Object.assign(row,{'Price Bought':'123.45',LOW:'10.11',MID:'20.22',MARKET:'30.33'});
@@ -51,6 +51,13 @@ async function fixture(admin=false,denied=false,search="",storage=new Map()){
  assert.equal(JSON.parse(single.storage.get('duel-wants')).length,1);
  assert.equal(JSON.parse(single.storage.get('duel-wants'))[0].language,'English');
  assert.equal(selection.element('wantVersionDialog').open,false);
+ const languageFiltered=await fixture(false,false,'?cardLanguage=Spanish&lang=es');
+ assert.equal(languageFiltered.element('cardLanguage').value,'Spanish');
+ assert.match(languageFiltered.element('grid').innerHTML,/Copias: 2/);
+ assert.match(languageFiltered.element('grid').innerHTML,/Super Rare \(SR\)/);
+ assert.doesNotMatch(languageFiltered.element('grid').innerHTML,/Súper rara/);
+ await languageFiltered.element('shareSearch').onclick();assert.match(languageFiltered.copied(),/cardLanguage=Spanish/);
+ languageFiltered.element('reset').onclick();assert.equal(languageFiltered.element('cardLanguage').value,'');
  const admin=await fixture(true);assert.equal(admin.element('adminPanel').hidden,false);assert.equal(admin.element('folders').hidden,false);assert.match(admin.element('grid').innerHTML,/Visible folder/);assert.match(admin.element('adminPanel').innerHTML,/visibleFolder/);vm.runInContext('openCard(7)',admin.context);assert.match(admin.element('detailContent').innerHTML,/123\.45/);assert.match(admin.element('detailContent').innerHTML,/Visible folder/);assert.match(admin.element('detailContent').innerHTML,/77\.88 USD/);assert.match(admin.element('detailContent').innerHTML,/66\.55 USD/);
  const denied=await fixture(true,true);assert.equal(denied.element('login').hidden,false);assert.equal(denied.element('collectionView').hidden,true);
  console.log('Frontend checks passed: public/admin initialization, redacted details, stable card IDs, escaped CSV content, empty results, and login gate.');
