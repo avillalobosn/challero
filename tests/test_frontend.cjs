@@ -32,6 +32,7 @@ async function fixture(admin=false,denied=false,search="",storage=new Map()){
  await shared.element('shareSearch').onclick();assert.match(shared.copied(),/q=Test/);assert.match(shared.copied(),/lang=es/);assert.match(shared.replaced(),/images=1/);
  const selection=await fixture();
  selection.element('grid').onclick({target:{closest:selector=>selector==='[data-add-want]'?{dataset:{addWant:'7'}}:null}});
+ assert.equal(selection.element('wantVersionDialog').open,true);
  selection.element('confirmWantVersion').onclick();
  assert.match(selection.element('wantItems').innerHTML,/&lt;Test Card&gt;/);assert.equal(JSON.parse(selection.storage.get('duel-wants')).length,1);
  selection.element('wantItems').onchange({target:{dataset:{wantQuantity:'0'},value:'3'}});
@@ -42,6 +43,14 @@ async function fixture(admin=false,denied=false,search="",storage=new Map()){
  await selection.element('copyWant').onclick();assert.match(selection.copied(),/Spanish/);assert.match(selection.copied(),/English/);
  const reloaded=await fixture(false,false,'',selection.storage);assert.match(reloaded.element('wantItems').innerHTML,/value="3"/);
  reloaded.element('clearWant').onclick();assert.equal(JSON.parse(selection.storage.get('duel-wants')).length,0);
+ const single=await fixture();
+ single.response.rows[1].Language='English';
+ vm.runInContext('rows=payload.rows;update()',single.context);
+ single.element('grid').onclick({target:{closest:selector=>selector==='[data-add-want]'?{dataset:{addWant:'7'}}:null}});
+ assert.equal(single.element('wantVersionDialog').open,false);
+ assert.equal(JSON.parse(single.storage.get('duel-wants')).length,1);
+ assert.equal(JSON.parse(single.storage.get('duel-wants'))[0].language,'English');
+ assert.equal(selection.element('wantVersionDialog').open,false);
  const admin=await fixture(true);assert.equal(admin.element('adminPanel').hidden,false);assert.equal(admin.element('folders').hidden,false);assert.match(admin.element('grid').innerHTML,/Visible folder/);assert.match(admin.element('adminPanel').innerHTML,/visibleFolder/);vm.runInContext('openCard(7)',admin.context);assert.match(admin.element('detailContent').innerHTML,/123\.45/);assert.match(admin.element('detailContent').innerHTML,/Visible folder/);assert.match(admin.element('detailContent').innerHTML,/77\.88 USD/);assert.match(admin.element('detailContent').innerHTML,/66\.55 USD/);
  const denied=await fixture(true,true);assert.equal(denied.element('login').hidden,false);assert.equal(denied.element('collectionView').hidden,true);
  console.log('Frontend checks passed: public/admin initialization, redacted details, stable card IDs, escaped CSV content, empty results, and login gate.');

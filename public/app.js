@@ -203,6 +203,7 @@ let pendingVersions=[], replacingWant=null;
 function chooseWantVersion(r, replaceIndex=null) {
     replacingWant=replaceIndex;
     pendingVersions=[...new Map(rows.filter(x=>groupKey(x)===groupKey(r)).map(x=>[versionKey(x),x])).values()];
+    if (pendingVersions.length === 1) { addWantVersion(pendingVersions[0]); return; }
     const es=language==='es';
     $('wantVersionTitle').textContent=es?'Elige una versión':'Choose a version';
     $('confirmWantVersion').textContent=es?'Añadir a la lista':'Add to want list';
@@ -214,13 +215,17 @@ function chooseWantVersion(r, replaceIndex=null) {
 $('cancelWantVersion').onclick=()=>$('wantVersionDialog').close();
 $('confirmWantVersion').onclick=()=>{
     const r=pendingVersions[Number($('wantVersion').value)];if(!r)return;
+    addWantVersion(r);
+};
+function addWantVersion(r) {
     const version=versionKey(r),existing=wants.find(x=>x.version===version);
     const quantity=replacingWant===null?1:wants[replacingWant].quantity;
     if(replacingWant!==null)wants.splice(replacingWant,1);
     if(existing){if(replacingWant!==null)existing.quantity=Math.min(999,existing.quantity+quantity);}
     else wants.push({key:groupKey(r),version,name:r['Card Name'],set:setName(r),code:r['Card Number'],language:r.Language,edition:r.Printing,rarity:r.Rarity,condition:r.Condition,quantity});
-    $('wantVersionDialog').close();saveWants();
-};
+    if ($('wantVersionDialog').open) $('wantVersionDialog').close();
+    saveWants();
+}
 function saveWants() {
     try { globalThis.localStorage?.setItem('duel-wants',JSON.stringify(wants)); }
     catch { notify('Browser storage is unavailable; this list will last only until you reload.',true); }
