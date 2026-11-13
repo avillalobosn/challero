@@ -192,6 +192,35 @@ async function copyText(text) {
     try { await navigator.clipboard.writeText(text); notify(language === 'es' ? 'Copiado.' : 'Copied.'); }
     catch { $('copyFallback').hidden=false; $('copyFallback').value=text; $('copyFallback').focus(); $('copyFallback').select(); notify(language === 'es' ? 'Copia el texto seleccionado.' : 'Copy the selected text.'); }
 }
+function versionKey(r) {
+    return JSON.stringify([groupKey(r),r['Card Number'],r.Language,r.Printing,r.Rarity,r.Condition]);
+}
+function versionDetails(item) {
+    return item.version ? [item.code,t(item.language),t(item.edition),rarityLabel(item.rarity),t(item.condition)].filter(Boolean).join(' · ')
+        : (language==='es'?'Versión sin seleccionar':'Version not selected');
+}
+let pendingVersions=[], replacingWant=null;
+function chooseWantVersion(r, replaceIndex=null) {
+    replacingWant=replaceIndex;
+    pendingVersions=[...new Map(rows.filter(x=>groupKey(x)===groupKey(r)).map(x=>[versionKey(x),x])).values()];
+    const es=language==='es';
+    $('wantVersionTitle').textContent=es?'Elige una versión':'Choose a version';
+    $('confirmWantVersion').textContent=es?'Añadir a la lista':'Add to want list';
+    $('cancelWantVersion').textContent=es?'Cancelar':'Cancel';
+    $('wantVersion').innerHTML=pendingVersions.map((x,i)=>`<option value="${i}">${esc([x['Card Number'],t(x.Language),t(x.Printing),rarityLabel(x.Rarity),t(x.Condition)].filter(Boolean).join(' · '))}</option>`).join('');
+    $('wantVersion').value='0';
+    $('wantVersionDialog').showModal();
+}
+$('cancelWantVersion').onclick=()=>$('wantVersionDialog').close();
+$('confirmWantVersion').onclick=()=>{
+    const r=pendingVersions[Number($('wantVersion').value)];if(!r)return;
+    const version=versionKey(r),existing=wants.find(x=>x.version===version);
+    const quantity=replacingWant===null?1:wants[replacingWant].quantity;
+    if(replacingWant!==null)wants.splice(replacingWant,1);
+    if(existing){if(replacingWant!==null)existing.quantity=Math.min(999,existing.quantity+quantity);}
+    else wants.push({key:groupKey(r),version,name:r['Card Name'],set:setName(r),code:r['Card Number'],language:r.Language,edition:r.Printing,rarity:r.Rarity,condition:r.Condition,quantity});
+    $('wantVersionDialog').close();saveWants();
+};
 function saveWants() {
     try { globalThis.localStorage?.setItem('duel-wants',JSON.stringify(wants)); }
     catch { notify('Browser storage is unavailable; this list will last only until you reload.',true); }
@@ -208,13 +237,13 @@ function renderWants() {
     $('copyWant').textContent=es?'Copiar lista':'Copy list';
     $('clearWant').textContent=es?'Vaciar lista':'Clear list';
     $('copyWant').disabled=$('clearWant').disabled=!wants.length;
-    const current = new Set(groupCards(rows).map(groupKey));
-    $('wantItems').innerHTML=wants.map((item,i)=>`<div class="want-item"><span>${esc(item.name)} · ${esc(item.set)}${current.has(item.key)?'':(es?' · Ya no está disponible':' · No longer listed')}</span><label>${es?'Cantidad':'Quantity'} <input type="number" min="1" max="999" value="${item.quantity}" data-want-quantity="${i}"></label><button type="button" data-remove-want="${i}">${es?'Quitar':'Remove'}</button></div>`).join('') || `<p>${es?'Selecciona cartas para empezar.':'Select cards to start your list.'}</p>`;
+    const current = new Set(rows.map(versionKey));
+    $('wantItems').innerHTML=wants.map((item,i)=>`<div class="want-item"><span>${esc(item.name)} · ${esc(item.set)}<br>${esc(versionDetails(item))}${!item.version ? `<button type="button" data-choose-want="${i}">${es?'Elegir versión':'Choose version'}</button>` : ''}${current.has(item.version)||(!item.version&&rows.some(r=>groupKey(r)===item.key))?'':(es?' · Ya no está disponible':' · No longer listed')}</span><label>${es?'Cantidad':'Quantity'} <input type="number" min="1" max="999" value="${item.quantity}" data-want-quantity="${i}"></label><button type="button" data-remove-want="${i}">${es?'Quitar':'Remove'}</button></div>`).join('') || `<p>${es?'Selecciona cartas para empezar.':'Select cards to start your list.'}</p>`;
 }
 $('shareSearch').onclick=()=>copyText(searchURL().href);
-$('copyWant').onclick=()=>copyText((language==='es'?'Mi lista de cartas':'My card want list')+'\n'+wants.map(x=>`${x.quantity} × ${x.name} — ${x.set}`).join('\n'));
+$('copyWant').onclick=()=>copyText((language==='es'?'Mi lista de cartas':'My card want list')+'\n'+wants.map(x=>`${x.quantity} × ${x.name} — ${x.set} — ${versionDetails(x)}`).join('\n'));
 $('clearWant').onclick=()=>{wants=[];saveWants();};
-$('wantItems').onclick=e=>{const button=e.target.closest('[data-remove-want]');if(button){wants.splice(+button.dataset.removeWant,1);saveWants();}};
+$('wantItems').onclick=e=>{const choose=e.target.closest('[data-choose-want]');if(choose){const i=+choose.dataset.chooseWant;const r=rows.find(r=>groupKey(r)===wants[i].key);if(r)chooseWantVersion(r,i);return;}const button=e.target.closest('[data-remove-want]');if(button){wants.splice(+button.dataset.removeWant,1);saveWants();}};
 $('wantItems').onchange=e=>{const index=e.target.dataset.wantQuantity;if(index===undefined)return;const quantity=Number(e.target.value);if(Number.isInteger(quantity)&&quantity>=1&&quantity<=999){wants[+index].quantity=quantity;saveWants();}else renderWants();};
 
 function image(r, cls='') {
@@ -252,7 +281,7 @@ function render() {
 
 function fallbackImages(){document.querySelectorAll('img').forEach(img=>img.onerror=()=>{const d=document.createElement('div');d.className='fallback';d.textContent=img.alt;img.replaceWith(d)})}
 $('prev').onclick=()=>{page--;render();$('title').scrollIntoView({behavior:'smooth'})};$('next').onclick=()=>{page++;render();$('title').scrollIntoView({behavior:'smooth'})};
-$('grid').onclick=e=>{const add=e.target.closest('[data-add-want]');if(add){const r=filtered.find(r=>r._id===+add.dataset.addWant);if(r&&!wants.some(x=>x.key===groupKey(r))){wants.push({key:groupKey(r),name:r['Card Name'],set:setName(r),quantity:1});saveWants();}return;}const b=e.target.closest('[data-id]');if(b)openCard(+b.dataset.id)};
+$('grid').onclick=e=>{const add=e.target.closest('[data-add-want]');if(add){const r=filtered.find(r=>r._id===+add.dataset.addWant);if(r)chooseWantVersion(r);return;}const b=e.target.closest('[data-id]');if(b)openCard(+b.dataset.id)};
 function referenceSection(r){
  if(!payload.admin)return '';
  const ref=r.reference_prices||{};

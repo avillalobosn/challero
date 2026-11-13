@@ -32,9 +32,14 @@ async function fixture(admin=false,denied=false,search="",storage=new Map()){
  await shared.element('shareSearch').onclick();assert.match(shared.copied(),/q=Test/);assert.match(shared.copied(),/lang=es/);assert.match(shared.replaced(),/images=1/);
  const selection=await fixture();
  selection.element('grid').onclick({target:{closest:selector=>selector==='[data-add-want]'?{dataset:{addWant:'7'}}:null}});
+ selection.element('confirmWantVersion').onclick();
  assert.match(selection.element('wantItems').innerHTML,/&lt;Test Card&gt;/);assert.equal(JSON.parse(selection.storage.get('duel-wants')).length,1);
  selection.element('wantItems').onchange({target:{dataset:{wantQuantity:'0'},value:'3'}});
- await selection.element('copyWant').onclick();assert.match(selection.copied(),/3 × <Test Card> — Fixture set/);assert.doesNotMatch(selection.copied(),/Visible folder|77.88/);
+ await selection.element('copyWant').onclick();assert.match(selection.copied(),/3 × <Test Card> — Fixture set/);assert.doesNotMatch(selection.copied(),/Visible folder|77.88/);assert.match(selection.copied(),/TEST-EN001 · English · 1st Edition · Super Rare \(SR\) · NearMint/);
+ selection.element('grid').onclick({target:{closest:selector=>selector==='[data-add-want]'?{dataset:{addWant:'7'}}:null}});
+ selection.element('wantVersion').value='1';selection.element('confirmWantVersion').onclick();
+ assert.equal(JSON.parse(selection.storage.get('duel-wants')).length,2);
+ await selection.element('copyWant').onclick();assert.match(selection.copied(),/Spanish/);assert.match(selection.copied(),/English/);
  const reloaded=await fixture(false,false,'',selection.storage);assert.match(reloaded.element('wantItems').innerHTML,/value="3"/);
  reloaded.element('clearWant').onclick();assert.equal(JSON.parse(selection.storage.get('duel-wants')).length,0);
  const admin=await fixture(true);assert.equal(admin.element('adminPanel').hidden,false);assert.equal(admin.element('folders').hidden,false);assert.match(admin.element('grid').innerHTML,/Visible folder/);assert.match(admin.element('adminPanel').innerHTML,/visibleFolder/);vm.runInContext('openCard(7)',admin.context);assert.match(admin.element('detailContent').innerHTML,/123\.45/);assert.match(admin.element('detailContent').innerHTML,/Visible folder/);assert.match(admin.element('detailContent').innerHTML,/77\.88 USD/);assert.match(admin.element('detailContent').innerHTML,/66\.55 USD/);

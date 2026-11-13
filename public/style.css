@@ -26,3 +26,5 @@
 @media(max-width:650px){.text-view .card{grid-template-columns:minmax(0,1fr) auto}.text-view .copy-count{grid-column:1}.text-view .offer{grid-column:2}}
 
 .card-entry{min-width:0;display:flex;flex-direction:column;gap:6px}.card-entry>.card{width:100%;height:100%}.text-view .card-entry{display:flex;flex-direction:row;align-items:stretch}.text-view .card-entry>.card{flex:1;min-width:0}.want-add{font-size:12px;padding:8px;color:var(--green);background:var(--panel);border:1px solid var(--line);border-radius:5px}#wantPanel{border:1px solid var(--line);padding:16px;margin:12px 0 20px;border-radius:6px}.want-item{display:flex;gap:12px;align-items:center;margin:10px 0}.want-item>span{flex:1}.want-item input{width:65px;background:var(--panel);color:var(--white);padding:6px;border:1px solid var(--line)}#copyFallback{display:block;width:100%;min-height:100px;margin:12px 0}#copyFallback[hidden]{display:none}@media(max-width:650px){.text-view .card-entry{flex-direction:column}.want-item{flex-wrap:wrap}.want-item>span{flex-basis:100%}}
+
+#wantVersionDialog{max-width:min(600px,95vw)}#wantVersion{display:block;width:100%;margin:16px 0;white-space:normal}
