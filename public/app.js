@@ -123,6 +123,7 @@ $('language').onclick = () => {
 
 function initialize(){
 $('folderHeading').hidden=!payload.admin;$('folders').hidden=!payload.admin;$('folderStat').hidden=!payload.admin;$('stats').hidden=!payload.admin;
+restoreSearch();
 localizeVisitor();
 if (payload.admin) {
 $('copies').textContent=num(rows.reduce((s,r)=>s+Number(r.Quantity),0));$('unique').textContent=num(new Set(rows.map(r=>r['Card Name'])).size);$('entries').textContent=num(rows.length);$('folderCount').textContent=folders.length;}
@@ -159,6 +160,63 @@ function update() {
     render();
 }
 
+// Public links contain filters only; want lists stay on this device.
+let restoredSearch = false;
+let wants = [];
+try { const saved = JSON.parse(globalThis.localStorage?.getItem('duel-wants') || '[]');
+    if (Array.isArray(saved)) wants = saved.filter(x => x && typeof x.key === 'string' && Number.isInteger(x.quantity) && x.quantity > 0).slice(0,500);
+} catch {}
+function restoreSearch() {
+    if (adminRoute || restoredSearch) return;
+    restoredSearch = true;
+    const params = new URLSearchParams(location.search || '');
+    for (const [id, key] of [['search','q'],['set','set'],['rarity','rarity'],['type','type'],['sort','sort']]) {
+        const value = params.get(key);
+        if (value !== null && (id === 'search' || [...$(id).options].some(o => o.value === value && !o.disabled))) $(id).value = value;
+    }
+    showImages = params.get('images') === '1';
+    if (['en','es'].includes(params.get('lang'))) language = params.get('lang');
+}
+function searchURL() {
+    const url = new URL(location.href);
+    url.search = ''; url.hash = '';
+    for (const [id,key] of [['search','q'],['set','set'],['rarity','rarity'],['type','type'],['sort','sort']]) {
+        const value = $(id).value;
+        if (value && !(id === 'sort' && value === 'name')) url.searchParams.set(key,value);
+    }
+    if (showImages) url.searchParams.set('images','1');
+    url.searchParams.set('lang',language);
+    return url;
+}
+async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); notify(language === 'es' ? 'Copiado.' : 'Copied.'); }
+    catch { $('copyFallback').hidden=false; $('copyFallback').value=text; $('copyFallback').focus(); $('copyFallback').select(); notify(language === 'es' ? 'Copia el texto seleccionado.' : 'Copy the selected text.'); }
+}
+function saveWants() {
+    try { globalThis.localStorage?.setItem('duel-wants',JSON.stringify(wants)); }
+    catch { notify('Browser storage is unavailable; this list will last only until you reload.',true); }
+    render();
+}
+function renderWants() {
+    $('wantPanel').hidden=adminRoute;
+    $('shareSearch').hidden=adminRoute;
+    if (adminRoute) return;
+    const es = language === 'es';
+    $('shareSearch').textContent=es?'Copiar enlace de búsqueda':'Copy search link';
+    $('wantTitle').textContent=es?'Lista de deseos':'Want list';
+    $('wantNote').textContent=es?'Guardada en este navegador. Las cantidades solicitadas no reservan cartas.':'Saved in this browser. Requested quantities do not reserve cards.';
+    $('copyWant').textContent=es?'Copiar lista':'Copy list';
+    $('clearWant').textContent=es?'Vaciar lista':'Clear list';
+    $('copyWant').disabled=$('clearWant').disabled=!wants.length;
+    const current = new Set(groupCards(rows).map(groupKey));
+    $('wantItems').innerHTML=wants.map((item,i)=>`<div class="want-item"><span>${esc(item.name)} · ${esc(item.set)}${current.has(item.key)?'':(es?' · Ya no está disponible':' · No longer listed')}</span><label>${es?'Cantidad':'Quantity'} <input type="number" min="1" max="999" value="${item.quantity}" data-want-quantity="${i}"></label><button type="button" data-remove-want="${i}">${es?'Quitar':'Remove'}</button></div>`).join('') || `<p>${es?'Selecciona cartas para empezar.':'Select cards to start your list.'}</p>`;
+}
+$('shareSearch').onclick=()=>copyText(searchURL().href);
+$('copyWant').onclick=()=>copyText((language==='es'?'Mi lista de cartas':'My card want list')+'\n'+wants.map(x=>`${x.quantity} × ${x.name} — ${x.set}`).join('\n'));
+$('clearWant').onclick=()=>{wants=[];saveWants();};
+$('wantItems').onclick=e=>{const button=e.target.closest('[data-remove-want]');if(button){wants.splice(+button.dataset.removeWant,1);saveWants();}};
+$('wantItems').onchange=e=>{const index=e.target.dataset.wantQuantity;if(index===undefined)return;const quantity=Number(e.target.value);if(Number.isInteger(quantity)&&quantity>=1&&quantity<=999){wants[+index].quantity=quantity;saveWants();}else renderWants();};
+
 function image(r, cls='') {
     const name = esc(cardName(r));
     return r.info.image
@@ -169,6 +227,8 @@ function image(r, cls='') {
 $('showImages').onchange = () => { showImages = $('showImages').checked; render(); };
 
 function render() {
+    renderWants();
+    if (!adminRoute && globalThis.history) history.replaceState(null,'',searchURL());
     $('showImagesLabel').textContent = t('Show images');
     $('showImages').checked = showImages;
     $('grid').classList.toggle('text-view', !showImages);
@@ -180,7 +240,7 @@ function render() {
         const badge = payload.admin ? `<span class="quantity">×${esc(r.Quantity)}</span>` : '';
         const location = payload.admin ? `<div class="card-folder">▱ ${esc(r['Folder Name'])}</div>` : '';
         const rarities = (r.rarities || [r.Rarity]).map(rarityLabel).join(' · ');
-        return `<button class="card" data-id="${r._id}" aria-label="${t('View')} ${name}, ${esc(r['Card Number'])}">${showImages ? `<div class="art">${image(r)}${badge}</div>` : badge}<h3 title="${name}">${name}</h3><div class="card-meta"><span>${esc(r['Card Number'])}</span><span class="rarity">${esc(rarities)}</span></div>${location}${!showImages ? `<span class="copy-count">${t('Copies')}: ${num(payload.admin ? r.Quantity : r.copies)}</span>` : ''}<div class="offer">${esc(offer(r))}</div></button>`;
+        return `<div class="card-entry"><button class="card" data-id="${r._id}" aria-label="${t('View')} ${name}, ${esc(r['Card Number'])}">${showImages ? `<div class="art">${image(r)}${badge}</div>` : badge}<h3 title="${name}">${name}</h3><div class="card-meta"><span>${esc(r['Card Number'])}</span><span class="rarity">${esc(rarities)}</span></div>${location}${!showImages ? `<span class="copy-count">${t('Copies')}: ${num(payload.admin ? r.Quantity : r.copies)}</span>` : ''}<div class="offer">${esc(offer(r))}</div></button>${!payload.admin ? `<button type="button" class="want-add" data-add-want="${r._id}" aria-pressed="${wants.some(x=>x.key===groupKey(r))}">${wants.some(x=>x.key===groupKey(r)) ? (language==='es'?'✓ En la lista':'✓ In want list') : (language==='es'?'+ Lista de deseos':'+ Want list')}</button>` : ''}</div>`;
     }).join('');
     $('page').textContent = payload.admin
         ? `${filtered.length?(page-1)*pageSize+1:0}–${Math.min(page*pageSize,filtered.length)} of ${num(filtered.length)}`
@@ -192,7 +252,7 @@ function render() {
 
 function fallbackImages(){document.querySelectorAll('img').forEach(img=>img.onerror=()=>{const d=document.createElement('div');d.className='fallback';d.textContent=img.alt;img.replaceWith(d)})}
 $('prev').onclick=()=>{page--;render();$('title').scrollIntoView({behavior:'smooth'})};$('next').onclick=()=>{page++;render();$('title').scrollIntoView({behavior:'smooth'})};
-$('grid').onclick=e=>{const b=e.target.closest('[data-id]');if(b)openCard(+b.dataset.id)};
+$('grid').onclick=e=>{const add=e.target.closest('[data-add-want]');if(add){const r=filtered.find(r=>r._id===+add.dataset.addWant);if(r&&!wants.some(x=>x.key===groupKey(r))){wants.push({key:groupKey(r),name:r['Card Name'],set:setName(r),quantity:1});saveWants();}return;}const b=e.target.closest('[data-id]');if(b)openCard(+b.dataset.id)};
 function referenceSection(r){
  if(!payload.admin)return '';
  const ref=r.reference_prices||{};
