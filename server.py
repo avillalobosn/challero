@@ -121,6 +121,25 @@ def reference_prices(row, pricing):
             'vendors':pricing.get('vendors',[]),'fetched_at':pricing.get('fetched_at'),
             'stale':not pricing.get('fetched_at') or time.time()-pricing['fetched_at']>CATALOG_TTL}
 
+def sync_token():
+    if store := HOSTED_STORE.get():
+        return store.sync_token()
+    with LOCK:
+        versions = [(name, (DATA / name).stat().st_mtime_ns) for name in
+                    ['collection.json', 'cache.json', 'spanish-names.json', 'refresh-request.json', 'refresh-completed.json']
+                    if (DATA / name).exists()]
+        return hashlib.sha256(repr(versions).encode()).hexdigest()
+
+
+def image_allowed(path, admin):
+    if store := HOSTED_STORE.get():
+        return store.image_allowed(path, admin)
+    state = read('collection.json', {'rows': [], 'settings': {'visible_folders': []}})
+    cards = read('cache.json', {'cards': {}})['cards']
+    return any(cards.get(r['Card Name'], {}).get('image') == path for r in state['rows']
+               if admin or r['Folder Name'] in state['settings']['visible_folders'])
+
+
 def collection_payload(admin=False):
     with LOCK:
         state = read('collection.json', {'rows': [], 'settings': {'visible_folders': [], 'markup': None, 'currency': 'USD'}, 'revision': 0}); cache = read('cache.json', {'cards':{}})
@@ -146,7 +165,7 @@ def collection_payload(admin=False):
                     info['thumbnail'] = image.removesuffix('.jpg') + '-thumb-v2.webp'
             item.update(_id=i, info=info, public_price=public_price(r, state['settings']))
             result.append(item)
-        response = {'rows':result, 'currency':state['settings']['currency'], 'revision':state['revision'], 'admin':admin}
+        response = {'rows':result, 'currency':state['settings']['currency'], 'revision':state['revision'], 'sync_token':sync_token(), 'admin':admin}
         if admin:
             if store:
                 requested = read('refresh-request.json', {}).get('requested_at', 0)
@@ -233,7 +252,8 @@ def refresh_cache(force=False):
 def response_headers(content_type, cookie=None):
     headers = {
         'Content-Type': content_type,
-        'Cache-Control': 'no-store' if content_type == 'application/json' or content_type.startswith('image/') else 'no-cache',
+        'Cache-Control': 'private, no-cache, must-revalidate' if content_type.startswith('image/') else ('no-store' if content_type == 'application/json' else 'no-cache'),
+        'Vary': 'Cookie',
         'X-Content-Type-Options': 'nosniff',
         'Referrer-Policy': 'same-origin',
         'Content-Security-Policy': "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
@@ -268,6 +288,8 @@ class ArchiveRoutes:
         return None
     def get(self, path):
         admin = bool(self.session())
+        if path=='/api/revision': return self.send(200, {'sync_token': sync_token()})
+        if path=='/api/admin/revision': return self.send(200, {'sync_token': sync_token()}) if admin else self.send(401, {'error': 'Admin login required.'})
         if path=='/api/collection': return self.send(200,collection_payload(False))
         if path=='/api/admin': return self.send(200,collection_payload(True)) if admin else self.send(401,{'error':'Admin login required.'})
         if path.startswith('/assets/'):
@@ -275,13 +297,15 @@ class ArchiveRoutes:
             thumbnail = file.endswith('-thumb-v2.webp')
             card_id = file.removesuffix('-thumb-v2.webp') if thumbnail else file.removesuffix('.jpg')
             if not card_id.isascii() or not card_id.isdigit() or not (thumbnail or file.endswith('.jpg')): return self.send(404,{'error':'Not found'})
-            state = read('collection.json')
-            visible = set(state['settings']['visible_folders'])
-            cards = read('cache.json', {'cards': {}})['cards']
             asset_path = f'assets/{card_id}.jpg'
-            if not any(cards.get(r['Card Name'], {}).get('image') == asset_path
-                       for r in state['rows'] if admin or r['Folder Name'] in visible):
+            if not image_allowed(asset_path, admin):
                 return self.send(404, {'error': 'Not found'})
+            content_type = 'image/webp' if thumbnail else 'image/jpeg'
+            etag = '"' + hashlib.sha256((sync_token() + path + str(admin)).encode()).hexdigest() + '"'
+            image_headers = {'ETag': etag}
+            # Check current visibility before accepting a cached image.
+            if self.headers.get('If-None-Match') == etag:
+                return self.send(304, b'', content_type=content_type, extra_headers=image_headers)
             if store := HOSTED_STORE.get():
                 image = store.image(path.lstrip('/') if thumbnail else asset_path)
                 if image is None and thumbnail:
@@ -291,7 +315,7 @@ class ArchiveRoutes:
                         store.save_image(path.lstrip('/'), image)
                 if image is None:
                     return self.send(404, {'error': 'Not found'})
-                return self.send(200, image, content_type='image/webp' if thumbnail else 'image/jpeg')
+                return self.send(200, image, content_type=content_type, extra_headers=image_headers)
             target = DATA / asset_path
             if thumbnail:
                 thumb_target = DATA / path.lstrip('/')
@@ -305,7 +329,7 @@ class ArchiveRoutes:
         elif path in ['/app.js','/style.css']: target=ROOT/'public'/path[1:]
         else: return self.send(404,{'error':'Not found'})
         if not target.is_file(): return self.send(404,{'error':'Not found'})
-        return self.send(200,target.read_bytes(),content_type=mimetypes.guess_type(target)[0] or 'application/octet-stream')
+        return self.send(200,target.read_bytes(),content_type=mimetypes.guess_type(target)[0] or 'application/octet-stream', extra_headers=image_headers if path.startswith('/assets/') else None)
     def post(self, path, raw_body, client_ip):
         if not 0 < len(raw_body) <= MAX_UPLOAD:
             return self.send(413, {'error': 'Upload must be under 12 MB.'})
@@ -403,10 +427,10 @@ class Handler(ArchiveRoutes, BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
-    def send(self, status, value, cookie=None, content_type='application/json'):
+    def send(self, status, value, cookie=None, content_type='application/json', extra_headers=None):
         data = json.dumps(value, ensure_ascii=False).encode() if content_type == 'application/json' else value
         self.send_response(status)
-        for name, header_value in response_headers(content_type, cookie).items():
+        for name, header_value in (response_headers(content_type, cookie) | (extra_headers or {})).items():
             self.send_header(name, header_value)
         self.send_header('Content-Length', str(len(data)))
         self.end_headers()

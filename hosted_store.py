@@ -44,6 +44,27 @@ class PostgresStore:
             (name, Jsonb(value)),
         )
 
+    def sync_token(self):
+        # Only row versions leave PostgreSQL, never the document bodies.
+        rows = self.connection.execute(
+            "SELECT name, xmin::text FROM duel_documents WHERE name = ANY(%s) ORDER BY name",
+            (['collection.json', 'cache.json', 'spanish-names.json', 'refresh-request.json', 'refresh-completed.json'],),
+        ).fetchall()
+        import hashlib
+        return hashlib.sha256(repr(rows).encode()).hexdigest()
+
+    def image_allowed(self, path, admin):
+        return self.connection.execute("""
+            SELECT EXISTS (
+                SELECT 1 FROM duel_documents collection
+                CROSS JOIN LATERAL jsonb_array_elements(collection.value->'rows') AS entry
+                JOIN duel_documents cache ON cache.name = 'cache.json'
+                WHERE collection.name = 'collection.json'
+                AND (%s OR (collection.value->'settings'->'visible_folders') ? (entry->>'Folder Name'))
+                AND cache.value->'cards'->(entry->>'Card Name')->>'image' = %s
+            )
+        """, (admin, path)).fetchone()[0]
+
     def image_paths(self):
         return {row[0] for row in self.connection.execute('SELECT path FROM duel_artwork')}
 

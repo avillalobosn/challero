@@ -32,8 +32,8 @@ class FastAPIRoutes(server.ArchiveRoutes):
     def __init__(self, request):
         self.headers = request.headers
 
-    def send(self, status, value, cookie=None, content_type='application/json'):
-        headers = server.response_headers(content_type, cookie)
+    def send(self, status, value, cookie=None, content_type='application/json', extra_headers=None):
+        headers = server.response_headers(content_type, cookie) | (extra_headers or {})
         response_class = JSONResponse if content_type == 'application/json' else Response
         return response_class(value, status_code=status, headers=headers)
 

@@ -85,6 +85,29 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(first, thumbnail.read_bytes())
         self.assertLess(len(first), len(original.getvalue()))
 
+    def test_revision_is_lightweight_and_tracks_metadata(self):
+        with patch.object(app, 'read', side_effect=AssertionError('Full document read')):
+            status, first, _ = self.call('/api/revision')
+        self.assertEqual(status, 200)
+        self.assertEqual(set(first), {'sync_token'})
+        app.save('cache.json', {'cards': {}, 'checked': time.time()})
+        self.assertNotEqual(first['sync_token'], self.call('/api/revision')[1]['sync_token'])
+        self.assertEqual(self.call('/api/admin/revision')[0], 401)
+
+    def test_image_revalidation_checks_current_visibility(self):
+        status, _, headers = self.call('/assets/1.jpg')
+        self.assertEqual(status, 200)
+        self.assertIn('private', headers['Cache-Control'])
+        self.assertIn('no-cache', headers['Cache-Control'])
+        conditional = {'If-None-Match': headers['ETag']}
+        status, body, _ = self.call('/assets/1.jpg', headers=conditional)
+        self.assertEqual(status, 304)
+        self.assertEqual(body, b'')
+        state = app.read('collection.json')
+        state['settings']['visible_folders'] = []
+        app.save('collection.json', state)
+        self.assertEqual(self.call('/assets/1.jpg', headers=conditional)[0], 404)
+
     def test_raw_files_and_private_assets_blocked(self):
         for path in ['/collection.js','/cards.js','/data/collection.json','/data/auth.json','/server.py','/../data/collection.json','/assets/2.jpg']:
             self.assertEqual(self.call(path)[0],404,path)
