@@ -48,7 +48,7 @@ class PostgresStore:
         # Only row versions leave PostgreSQL, never the document bodies.
         rows = self.connection.execute(
             "SELECT name, xmin::text FROM duel_documents WHERE name = ANY(%s) ORDER BY name",
-            (['collection.json', 'cache.json', 'spanish-names.json', 'refresh-request.json', 'refresh-completed.json'],),
+            (['collection.json', 'cache.json', 'spanish-names.json', 'refresh-request.json', 'refresh-completed.json', 'artwork-version.json'],),
         ).fetchall()
         import hashlib
         return hashlib.sha256(repr(rows).encode()).hexdigest()
@@ -61,9 +61,9 @@ class PostgresStore:
                 JOIN duel_documents cache ON cache.name = 'cache.json'
                 WHERE collection.name = 'collection.json'
                 AND (%s OR (collection.value->'settings'->'visible_folders') ? (entry->>'Folder Name'))
-                AND cache.value->'cards'->(entry->>'Card Name')->>'image' = %s
+                AND cache.value->'cards'->(entry->>'Card Name')->>'image' = ANY(%s)
             )
-        """, (admin, path)).fetchone()[0]
+        """, (admin, [path, path.removesuffix('.webp') + '.jpg'])).fetchone()[0]
 
     def image_paths(self):
         return {row[0] for row in self.connection.execute('SELECT path FROM duel_artwork')}
@@ -75,6 +75,8 @@ class PostgresStore:
         return row[0] if row else None
 
     def save_image(self, path, image):
+        if not path.endswith('.webp') or image[:4] != b'RIFF' or image[8:12] != b'WEBP':
+            raise ValueError('Only compressed WebP artwork can be stored.')
         self.connection.execute(
             'INSERT INTO duel_artwork VALUES (%s, %s) '
             'ON CONFLICT (path) DO NOTHING', (path, image)

@@ -22,7 +22,9 @@ class ArchiveTests(unittest.TestCase):
         app.save('collection.json',{'rows':self.rows,'settings':{'visible_folders':['Public binder'],'markup':25,'currency':'USD'},'revision':1})
         app.save('cache.json',{'cards':{'Visible card':{'id':1,'desc':'Visible effect','image':'assets/1.jpg'},'Secret card':{'id':2,'desc':'Secret effect','image':'assets/2.jpg'}},'unmatched':[]})
         (app.DATA/'assets').mkdir(exist_ok=True)
-        (app.DATA/'assets/1.jpg').write_bytes(b'image1');(app.DATA/'assets/2.jpg').write_bytes(b'image2')
+        from PIL import Image
+        for old in (app.DATA/'assets').iterdir(): old.unlink()
+        for number in (1,2): Image.new('RGB', (800,1200), 'purple').save(app.DATA/f'assets/{number}.jpg', 'JPEG')
         salt=b'test-only-salt-16';app.save('auth.json',{'salt':salt.hex(),'hash':hashlib.scrypt(b'test-password-123',salt=salt,n=16384,r=8,p=1).hex()})
         self.cookie=None
     def call(self,path,body=None,authenticated=True,headers=None):
@@ -66,6 +68,22 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(self.call('/api/admin')[1]['rows'][0]['Folder Name'],'Public binder')
         # User endpoint stays redacted even in an admin browser.
         self.assertEqual(len(self.call('/api/collection')[1]['rows']),1)
+    def test_detail_images_use_compressed_webp_and_preserve_permissions(self):
+        status, body, headers = self.call('/assets/1.webp')
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get_content_type(), 'image/webp')
+        from PIL import Image
+        with Image.open(io.BytesIO(body)) as image:
+            self.assertEqual(image.format, 'WEBP')
+            self.assertLessEqual(image.width, 480)
+            self.assertLessEqual(image.height, 700)
+        info = self.call('/api/collection')[1]['rows'][0]['info']
+        self.assertEqual(info['image'], 'assets/1.webp')
+        self.assertEqual(info['thumbnail'], 'assets/1-thumb-v2.webp')
+        self.assertEqual(self.call('/assets/2.webp')[0], 404)
+        self.login()
+        self.assertEqual(self.call('/assets/2.webp')[0], 200)
+
     def test_thumbnails_are_small_persistent_and_private(self):
         from PIL import Image
         original = io.BytesIO()
@@ -147,14 +165,18 @@ class ArchiveTests(unittest.TestCase):
         with patch.object(urllib.request,'urlopen') as network:
             app.refresh_cache();network.assert_not_called()
         self.assertEqual(app.read('cache.json')['cards']['Visible card']['desc'],'Updated effect')
-        (app.DATA/'assets/1.jpg').unlink()
-        response=io.BytesIO(b'\xff\xd8'+b'0'*1100+b'\xff\xd9')
+        (app.DATA/'assets/1.webp').unlink()
+        from PIL import Image
+        response=io.BytesIO()
+        Image.new('RGB', (800,1200), 'green').save(response, 'JPEG')
+        response.seek(0)
         with patch.object(urllib.request,'urlopen',return_value=response) as network:
             app.refresh_cache();self.assertEqual(network.call_count,1)
-        self.assertTrue((app.DATA/'assets/1.jpg').is_file())
+        self.assertTrue((app.DATA/'assets/1.webp').is_file())
+        self.assertFalse((app.DATA/'assets/1.jpg').exists())
     def test_cache_network_failure_keeps_existing_data(self):
         app.save('catalog.json',{'updated':time.time(),'data':[{'id':1,'name':'Visible card','desc':'Cached'},{'id':2,'name':'Secret card','desc':'Cached secret'}]})
         with patch.object(urllib.request,'urlopen',side_effect=OSError('Offline')):app.refresh_cache(True)
-        cache=app.read('cache.json');self.assertIn('Offline',cache['error']);self.assertTrue((app.DATA/'assets/1.jpg').exists());self.assertIn('Visible card',cache['cards'])
+        cache=app.read('cache.json');self.assertIn('Offline',cache['error']);self.assertTrue((app.DATA/'assets/1.webp').exists());self.assertIn('Visible card',cache['cards'])
 
 if __name__=='__main__':unittest.main()

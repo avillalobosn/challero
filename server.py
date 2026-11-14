@@ -22,14 +22,18 @@ INFO_FIELDS = ['id','type','desc','race','attribute','level','atk','def','linkva
 MAX_UPLOAD = 12 * 1024 * 1024
 CATALOG_TTL = 2 * 86400
 
-def thumbnail_image(original):
+def compressed_image(original, thumbnail=False):
     from PIL import Image
     with Image.open(io.BytesIO(original)) as image:
         image = image.convert('RGB')
-        image.thumbnail((200, 292), Image.Resampling.LANCZOS)
+        image.thumbnail((200, 292) if thumbnail else (480, 700), Image.Resampling.LANCZOS)
         output = io.BytesIO()
-        image.save(output, format='WEBP', quality=40, method=4)
+        image.save(output, format='WEBP', quality=40 if thumbnail else 55, method=4)
         return output.getvalue()
+
+
+def thumbnail_image(original):
+    return compressed_image(original, thumbnail=True)
 
 
 def read(name, default=None):
@@ -126,7 +130,7 @@ def sync_token():
         return store.sync_token()
     with LOCK:
         versions = [(name, (DATA / name).stat().st_mtime_ns) for name in
-                    ['collection.json', 'cache.json', 'spanish-names.json', 'refresh-request.json', 'refresh-completed.json']
+                    ['collection.json', 'cache.json', 'spanish-names.json', 'refresh-request.json', 'refresh-completed.json', 'artwork-version.json']
                     if (DATA / name).exists()]
         return hashlib.sha256(repr(versions).encode()).hexdigest()
 
@@ -136,7 +140,7 @@ def image_allowed(path, admin):
         return store.image_allowed(path, admin)
     state = read('collection.json', {'rows': [], 'settings': {'visible_folders': []}})
     cards = read('cache.json', {'cards': {}})['cards']
-    return any(cards.get(r['Card Name'], {}).get('image') == path for r in state['rows']
+    return any(cards.get(r['Card Name'], {}).get('image') in {path, str(Path(path).with_suffix('.jpg'))} for r in state['rows']
                if admin or r['Folder Name'] in state['settings']['visible_folders'])
 
 
@@ -158,11 +162,14 @@ def collection_payload(admin=False):
             pricing = info.pop('pricing', {})
             if admin: item['reference_prices'] = reference_prices(r, pricing)
             if image := info.get('image'):
+                compressed = str(Path(image).with_suffix('.webp'))
+                if (compressed in hosted_images if store else (DATA / compressed).is_file()):
+                    image = info['image'] = compressed
                 exists = image in hosted_images if store else (DATA / image).is_file()
                 if not exists:
                     info.pop('image', None)
                 else:
-                    info['thumbnail'] = image.removesuffix('.jpg') + '-thumb-v2.webp'
+                    info['thumbnail'] = str(Path(image).with_suffix('')) + '-thumb-v2.webp'
             item.update(_id=i, info=info, public_price=public_price(r, state['settings']))
             result.append(item)
         response = {'rows':result, 'currency':state['settings']['currency'], 'revision':state['revision'], 'sync_token':sync_token(), 'admin':admin}
@@ -220,22 +227,28 @@ def refresh_cache(force=False):
                 cards[name]['pricing']=pricing_metadata(c,catalog['updated'])
             elif name not in cards: unmatched.append(name); continue
             info=cards[name]
-            path = f"assets/{int(info['id'])}.jpg"
+            path = f"assets/{int(info['id'])}.webp"
             dest = DATA / path
             exists = path in hosted_images if store else dest.is_file()
             if not exists:
                 try:
-                    req=urllib.request.Request('https://images.ygoprodeck.com/images/cards/'+str(int(info['id']))+'.jpg',headers={'User-Agent':'DuelArchiveLocal/1.0'})
-                    with urllib.request.urlopen(req,timeout=20) as response: image=response.read(5*1024*1024)
-                    if not image.startswith(b'\xff\xd8') or len(image)<1000: raise ValueError('Invalid artwork response')
+                    legacy = str(Path(path).with_suffix('.jpg'))
+                    image = store.image(legacy) if store else ((DATA / legacy).read_bytes() if (DATA / legacy).is_file() else None)
+                    if image is None:
+                        req=urllib.request.Request('https://images.ygoprodeck.com/images/cards/'+str(int(info['id']))+'.jpg',headers={'User-Agent':'DuelArchiveLocal/1.0'})
+                        with urllib.request.urlopen(req,timeout=20) as response: image=response.read(5*1024*1024)
+                        if not image.startswith(b'\xff\xd8') or len(image)<1000: raise ValueError('Invalid artwork response')
+                    image = compressed_image(image)
                     if store:
                         store.save_image(path, image)
                         hosted_images.add(path)
+                        store.connection.execute('DELETE FROM duel_artwork WHERE path = %s', (legacy,))
                     else:
                         dest.parent.mkdir(exist_ok=True)
                         temp = dest.with_suffix('.tmp')
                         temp.write_bytes(image)
                         temp.replace(dest)
+                        (DATA / legacy).unlink(missing_ok=True)
                     exists = True
                 except Exception as exc: failures[name]=str(exc)
                 time.sleep(.15)
@@ -295,12 +308,12 @@ class ArchiveRoutes:
         if path.startswith('/assets/'):
             file=path.removeprefix('/assets/')
             thumbnail = file.endswith('-thumb-v2.webp')
-            card_id = file.removesuffix('-thumb-v2.webp') if thumbnail else file.removesuffix('.jpg')
-            if not card_id.isascii() or not card_id.isdigit() or not (thumbnail or file.endswith('.jpg')): return self.send(404,{'error':'Not found'})
-            asset_path = f'assets/{card_id}.jpg'
+            card_id = file.removesuffix('-thumb-v2.webp') if thumbnail else Path(file).stem
+            if not card_id.isascii() or not card_id.isdigit() or not (thumbnail or file.endswith('.webp') or file.endswith('.jpg')): return self.send(404,{'error':'Not found'})
+            asset_path = f'assets/{card_id}.webp'
             if not image_allowed(asset_path, admin):
                 return self.send(404, {'error': 'Not found'})
-            content_type = 'image/webp' if thumbnail else 'image/jpeg'
+            content_type = 'image/webp'
             etag = '"' + hashlib.sha256((sync_token() + path + str(admin)).encode()).hexdigest() + '"'
             image_headers = {'ETag': etag}
             # Check current visibility before accepting a cached image.
@@ -308,15 +321,20 @@ class ArchiveRoutes:
                 return self.send(304, b'', content_type=content_type, extra_headers=image_headers)
             if store := HOSTED_STORE.get():
                 image = store.image(path.lstrip('/') if thumbnail else asset_path)
-                if image is None and thumbnail:
-                    original = store.image(asset_path)
+                if image is None:
+                    original = store.image(asset_path) or store.image(f'assets/{card_id}.jpg')
                     if original is not None:
-                        image = thumbnail_image(original)
-                        store.save_image(path.lstrip('/'), image)
+                        image = compressed_image(original, thumbnail=thumbnail)
+                        store.save_image(path.lstrip('/') if thumbnail else asset_path, image)
                 if image is None:
                     return self.send(404, {'error': 'Not found'})
                 return self.send(200, image, content_type=content_type, extra_headers=image_headers)
             target = DATA / asset_path
+            if not target.is_file():
+                legacy = DATA / f'assets/{card_id}.jpg'
+                if legacy.is_file():
+                    content = compressed_image(legacy.read_bytes())
+                    with LOCK: target.write_bytes(content)
             if thumbnail:
                 thumb_target = DATA / path.lstrip('/')
                 if not thumb_target.is_file():
@@ -329,7 +347,7 @@ class ArchiveRoutes:
         elif path in ['/app.js','/style.css']: target=ROOT/'public'/path[1:]
         else: return self.send(404,{'error':'Not found'})
         if not target.is_file(): return self.send(404,{'error':'Not found'})
-        return self.send(200,target.read_bytes(),content_type=mimetypes.guess_type(target)[0] or 'application/octet-stream', extra_headers=image_headers if path.startswith('/assets/') else None)
+        return self.send(200,target.read_bytes(),content_type=content_type if path.startswith('/assets/') else (mimetypes.guess_type(target)[0] or 'application/octet-stream'), extra_headers=image_headers if path.startswith('/assets/') else None)
     def post(self, path, raw_body, client_ip):
         if not 0 < len(raw_body) <= MAX_UPLOAD:
             return self.send(413, {'error': 'Upload must be under 12 MB.'})

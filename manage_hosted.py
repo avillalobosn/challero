@@ -1,6 +1,7 @@
 """Initialize hosted storage or process queued artwork and metadata updates."""
 import argparse
 import os
+import time
 
 import psycopg
 
@@ -22,9 +23,9 @@ def migrate(connection):
         if (server.DATA / name).is_file():
             store.save(name, server.read(name))
     count = 0
-    for path in (server.DATA / 'assets').glob('*.jpg'):
-        if path.stem.isascii() and path.stem.isdigit() and path.is_file():
-            store.save_image(f'assets/{path.name}', path.read_bytes())
+    for path in (server.DATA / 'assets').iterdir():
+        if path.suffix in ('.jpg', '.webp') and path.stem.isascii() and path.stem.isdigit() and path.is_file():
+            store.save_image(f'assets/{path.stem}.webp', server.compressed_image(path.read_bytes()))
             count += 1
     return f'Migrated the collection, admin password hash, and {count} artwork files.'
 
@@ -88,20 +89,82 @@ def cleanup(connection, apply=False):
             + ('' if apply else ' Run cleanup --apply to delete them.'))
 
 
+def compress_artwork(connection, apply=False, batch_size=25):
+    pattern = r'^assets/[0-9]+\.jpg$'
+    count, size = connection.execute(
+        'SELECT count(*), coalesce(sum(octet_length(image)), 0) FROM duel_artwork WHERE path ~ %s',
+        (pattern,),
+    ).fetchone()
+    connection.commit()
+    if not apply:
+        return (f'{count} JPEGs ({size / 1024 / 1024:.2f} MiB) to replace with WebP. '
+                'Run compress-artwork --apply. Each replacement is saved before its JPEG is deleted.')
+    # A session lock survives batch commits and excludes concurrent refresh workers.
+    locked = connection.execute('SELECT pg_try_advisory_lock(6152847002)').fetchone()[0]
+    connection.commit()
+    if not locked:
+        return 'An artwork refresh or conversion is already running. Try again when it finishes.'
+    converted = failed = before = after = 0
+    cursor = ''
+    try:
+        while True:
+            with connection.transaction():
+                paths = connection.execute(
+                    'SELECT path FROM duel_artwork WHERE path ~ %s AND path > %s ORDER BY path LIMIT %s',
+                    (pattern, cursor, batch_size),
+                ).fetchall()
+                if not paths: break
+                store = PostgresStore(connection)
+                for (path,) in paths:
+                    cursor = path
+                    try:
+                        # One image at a time; a failed conversion retains its original.
+                        with connection.transaction():
+                            original = store.image(path)
+                            if original is None: continue
+                            compressed = server.compressed_image(original)
+                            destination = path.removesuffix('.jpg') + '.webp'
+                            connection.execute(
+                                'INSERT INTO duel_artwork VALUES (%s, %s) '
+                                'ON CONFLICT (path) DO UPDATE SET image = EXCLUDED.image',
+                                (destination, compressed),
+                            )
+                            connection.execute('DELETE FROM duel_artwork WHERE path = %s', (path,))
+                        converted += 1
+                        before += len(original)
+                        after += len(compressed)
+                    except (OSError, ValueError) as error:
+                        failed += 1
+                        print(f'Kept {path}: {type(error).__name__}.', flush=True)
+                store.save('artwork-version.json', {'updated_at': time.time_ns()})
+            print(f'Committed {converted} converted; {failed} failed. Safe to interrupt and resume.', flush=True)
+    finally:
+        connection.rollback()
+        connection.execute('SELECT pg_advisory_unlock(6152847002)')
+        connection.commit()
+    return (f'Replaced {converted} JPEGs: {before / 1024 / 1024:.2f} -> {after / 1024 / 1024:.2f} MiB. '
+            f'{failed} failed originals retained. Rerun to retry; completed images are skipped.')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['migrate', 'refresh', 'check', 'cleanup'])
+    parser.add_argument('action', choices=['migrate', 'refresh', 'check', 'cleanup', 'compress-artwork'])
     parser.add_argument('--force', action='store_true', help='Run a refresh even when none is queued.')
-    parser.add_argument('--apply', action='store_true', help='Delete obsolete thumbnails; cleanup defaults to a preview.')
+    parser.add_argument('--apply', action='store_true', help='Apply cleanup or artwork conversion; both default to a preview.')
+    parser.add_argument('--batch-size', type=int, default=25, help='Conversion batch size (1–100), default 25.')
     args = parser.parse_args()
-    if args.apply and args.action != 'cleanup':
-        parser.error('--apply is only valid with cleanup.')
+    if not 1 <= args.batch_size <= 100:
+        parser.error('--batch-size must be between 1 and 100.')
+    if args.apply and args.action not in ('cleanup', 'compress-artwork'):
+        parser.error('--apply is only valid with cleanup or compress-artwork.')
     url = os.getenv('DATABASE_URL')
     if not url:
         parser.error('Set DATABASE_URL before running this command.')
     try:
         with psycopg.connect(connection_url(url), connect_timeout=10, prepare_threshold=None) as connection:
-            if args.action == 'cleanup':
+            if args.action == 'compress-artwork':
+                message = compress_artwork(connection, args.apply, args.batch_size)
+            elif args.action == 'cleanup':
                 message = cleanup(connection, args.apply)
             elif args.action == 'check':
                 message = check(connection)

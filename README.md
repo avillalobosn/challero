@@ -96,3 +96,16 @@ Reference prices are private to admin. The public API strips all pricing metadat
 The existing refresh button refreshes reference prices and metadata together and reuses artwork. On startup/import the shared catalog refreshes when older than 48 hours; it is not a scheduled task. YGOPRODeck itself documents up to two days of endpoint caching. The displayed fetch timestamp tells you when this app retrieved data, not when a sale occurred. Old prices remain available and are marked stale after 48 hours if refreshes fail. Reopen a card after a background refresh completes to see the newest references.
 
 The first fetched snapshot priced 1,005 of 2,724 collection entries; 1,674 had matching set entries with no usable price and 45 were unmatched. These counts can change with later refreshes and uploads. Admin cache status reports current coverage.
+
+## Compressed artwork
+
+New artwork is encoded as WebP before storage: detail images fit within 480 × 700 at quality 55; grid thumbnails fit within 200 × 292 at quality 40. JPEG originals are no longer inserted. Existing metadata referring to JPEG filenames is supported during conversion.
+
+Deploy the WebP-capable backend before converting the production database. With DATABASE_URL configured, preview and apply:
+
+```sh
+.venv/bin/python manage_hosted.py compress-artwork
+.venv/bin/python manage_hosted.py compress-artwork --apply --batch-size 25
+```
+
+The converter lists paths in bounded batches and reads one image at a time. Each batch commits separately, and replacement plus deletion is transactional. Interrupting and rerunning skips completed images. Corrupt images are retained and reported. A database advisory lock prevents concurrent refresh/conversion workers. The command downloads each remaining JPEG once, so conversion itself consumes some database egress. Database disk space becomes reusable after deletion; it may not immediately shrink.
