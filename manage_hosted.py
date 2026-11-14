@@ -67,17 +67,43 @@ def check(connection):
     return f"Connected. Migration complete. Collection contains {len(collection['rows'])} entries."
 
 
+def cleanup(connection, apply=False):
+    # Match only the obsolete format. Originals and current v2 thumbnails stay intact.
+    pattern = r'^assets/[0-9]+-thumb\.webp$'
+    if apply:
+        rows = connection.execute(
+            'DELETE FROM duel_artwork WHERE path ~ %s '
+            'RETURNING path, octet_length(image)', (pattern,)
+        ).fetchall()
+        verb = 'Removed'
+    else:
+        rows = connection.execute(
+            'SELECT path, octet_length(image) FROM duel_artwork WHERE path ~ %s ORDER BY path',
+            (pattern,),
+        ).fetchall()
+        verb = 'Would remove'
+    size = sum(row[1] for row in rows)
+    return (f'{verb} {len(rows)} obsolete thumbnails ({size / 1024 / 1024:.2f} MiB). '
+            'Original JPEGs and current v2 thumbnails are preserved.'
+            + ('' if apply else ' Run cleanup --apply to delete them.'))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['migrate', 'refresh', 'check'])
+    parser.add_argument('action', choices=['migrate', 'refresh', 'check', 'cleanup'])
     parser.add_argument('--force', action='store_true', help='Run a refresh even when none is queued.')
+    parser.add_argument('--apply', action='store_true', help='Delete obsolete thumbnails; cleanup defaults to a preview.')
     args = parser.parse_args()
+    if args.apply and args.action != 'cleanup':
+        parser.error('--apply is only valid with cleanup.')
     url = os.getenv('DATABASE_URL')
     if not url:
         parser.error('Set DATABASE_URL before running this command.')
     try:
         with psycopg.connect(connection_url(url), connect_timeout=10, prepare_threshold=None) as connection:
-            if args.action == 'check':
+            if args.action == 'cleanup':
+                message = cleanup(connection, args.apply)
+            elif args.action == 'check':
                 message = check(connection)
             elif args.action == 'migrate':
                 message = migrate(connection)
