@@ -66,15 +66,22 @@ class PostgresStore:
 
     def image_allowed(self, path, admin):
         return self.connection.execute("""
-            SELECT EXISTS (
-                SELECT 1 FROM duel_documents collection
-                CROSS JOIN LATERAL jsonb_array_elements(collection.value->'rows') AS entry
-                JOIN duel_documents cache ON cache.name = 'cache.json'
+            WITH matched AS MATERIALIZED (
+                SELECT card.key AS name FROM duel_documents cache
+                CROSS JOIN LATERAL jsonb_each(cache.value->'cards') card
+                WHERE cache.name = 'cache.json' AND card.value->>'image' = ANY(%s)
+            ), entries AS MATERIALIZED (
+                SELECT entry->>'Card Name' AS name, entry->>'Folder Name' AS folder
+                FROM duel_documents collection
+                CROSS JOIN LATERAL jsonb_array_elements(collection.value->'rows') entry
                 WHERE collection.name = 'collection.json'
-                AND (%s OR (collection.value->'settings'->'visible_folders') ? (entry->>'Folder Name'))
-                AND cache.value->'cards'->(entry->>'Card Name')->>'image' = ANY(%s)
+            ), visibility AS MATERIALIZED (
+                SELECT value->'settings'->'visible_folders' AS folders
+                FROM duel_documents WHERE name = 'collection.json'
             )
-        """, (admin, [path, path.removesuffix('.webp') + '.jpg'])).fetchone()[0]
+            SELECT EXISTS (SELECT 1 FROM entries JOIN matched USING (name)
+                CROSS JOIN visibility WHERE %s OR visibility.folders ? entries.folder)
+        """, ([path, path.removesuffix('.webp') + '.jpg'], admin)).fetchone()[0]
 
     def image_paths(self):
         from s3_artwork import enabled
