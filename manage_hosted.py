@@ -109,33 +109,36 @@ def compress_artwork(connection, apply=False, batch_size=25):
     try:
         while True:
             with connection.transaction():
-                paths = connection.execute(
-                    'SELECT path FROM duel_artwork WHERE path ~ %s AND path > %s ORDER BY path LIMIT %s',
+                images = connection.execute(
+                    'SELECT path, image FROM duel_artwork WHERE path ~ %s AND path > %s ORDER BY path LIMIT %s',
                     (pattern, cursor, batch_size),
                 ).fetchall()
-                if not paths: break
+                if not images: break
                 store = PostgresStore(connection)
-                for (path,) in paths:
+                replacements = []
+                originals = []
+                for path, original in images:
                     cursor = path
                     try:
-                        # One image at a time; a failed conversion retains its original.
-                        with connection.transaction():
-                            original = store.image(path)
-                            if original is None: continue
-                            compressed = server.compressed_image(original)
-                            destination = path.removesuffix('.jpg') + '.webp'
-                            connection.execute(
-                                'INSERT INTO duel_artwork VALUES (%s, %s) '
-                                'ON CONFLICT (path) DO UPDATE SET image = EXCLUDED.image',
-                                (destination, compressed),
-                            )
-                            connection.execute('DELETE FROM duel_artwork WHERE path = %s', (path,))
-                        converted += 1
-                        before += len(original)
-                        after += len(compressed)
+                        # Decode one image at a time within a bounded input batch.
+                        compressed = server.compressed_image(original)
                     except (OSError, ValueError) as error:
                         failed += 1
                         print(f'Kept {path}: {type(error).__name__}.', flush=True)
+                        continue
+                    replacements.append((path.removesuffix('.jpg') + '.webp', compressed))
+                    originals.append(path)
+                    before += len(original)
+                    after += len(compressed)
+                if replacements:
+                    with connection.cursor() as writer:
+                        writer.executemany(
+                            'INSERT INTO duel_artwork VALUES (%s, %s) '
+                            'ON CONFLICT (path) DO UPDATE SET image = EXCLUDED.image',
+                            replacements,
+                        )
+                    connection.execute('DELETE FROM duel_artwork WHERE path = ANY(%s)', (originals,))
+                    converted += len(replacements)
                 store.save('artwork-version.json', {'updated_at': time.time_ns()})
             print(f'Committed {converted} converted; {failed} failed. Safe to interrupt and resume.', flush=True)
     finally:

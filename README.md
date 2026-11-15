@@ -108,4 +108,4 @@ Deploy the WebP-capable backend before converting the production database. With 
 .venv/bin/python manage_hosted.py compress-artwork --apply --batch-size 25
 ```
 
-The converter lists paths in bounded batches and reads one image at a time. Each batch commits separately, and replacement plus deletion is transactional. Interrupting and rerunning skips completed images. Corrupt images are retained and reported. A database advisory lock prevents concurrent refresh/conversion workers. The command downloads each remaining JPEG once, so conversion itself consumes some database egress. Database disk space becomes reusable after deletion; it may not immediately shrink.
+The converter reads a bounded batch at a time and decodes images individually. Each batch commits separately, and replacement plus deletion is transactional. Interrupting and rerunning skips completed images. Corrupt images are retained and reported. A database advisory lock prevents concurrent refresh/conversion workers. The command downloads each remaining JPEG once, so conversion itself consumes some database egress. Database disk space becomes reusable after deletion; it may not immediately shrink.
