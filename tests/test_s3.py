@@ -61,6 +61,22 @@ class S3Tests(unittest.TestCase):
         self.assertEqual(urlsplit(url).hostname,'s3.us-east-1.amazonaws.com')
         self.assertEqual(parse_qs(urlsplit(url).query)['X-Amz-Expires'],['120'])
         self.assertIn('/test-card-artwork/duel-artwork/',url)
+    def test_existing_database_thumbnail_is_uploaded_without_reencoding(self):
+        class Routes(server.ArchiveRoutes):
+            headers={}
+            def session(self):return None
+            def send(self,status,value,**kwargs):return status,value,kwargs
+        image=self.artwork();digest=hashlib.sha256(image).hexdigest()
+        store=Mock();store.image_allowed.return_value=True
+        store.object_record.side_effect=[None,(digest,len(image))]
+        store.image.return_value=image
+        token=server.HOSTED_STORE.set(store)
+        try:
+            self.assertEqual(Routes().get('/assets/1-thumb-v2.webp')[0],302)
+            store.image.assert_called_once_with('assets/1-thumb-v2.webp')
+            store.save_image.assert_called_once_with('assets/1-thumb-v2.webp',image)
+        finally:server.HOSTED_STORE.reset(token)
+
     def test_redirect_only_after_visibility_check_without_reading_image_body(self):
         class Routes(server.ArchiveRoutes):
             headers={}

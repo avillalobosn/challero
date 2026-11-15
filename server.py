@@ -323,9 +323,12 @@ class ArchiveRoutes:
                 record = store.object_record(object_path)
                 if record is None:
                     # Generate a missing thumbnail once; future downloads bypass Python.
-                    image = store.image(asset_path)
+                    image = store.image(object_path)
+                    if image is None and thumbnail:
+                        source = store.image(asset_path)
+                        if source is not None: image = thumbnail_image(source)
                     if image is not None:
-                        store.save_image(object_path, thumbnail_image(image) if thumbnail else image)
+                        store.save_image(object_path, image)
                         record = store.object_record(object_path)
                 if record is not None:
                     return self.send(302, b'', content_type='image/webp', extra_headers={

@@ -63,7 +63,9 @@ def s3_artwork(connection, apply=False, batch_size=25, prune=False):
                 else:
                     batch = connection.execute("""SELECT path, image FROM duel_artwork artwork
                         WHERE path > %s AND NOT EXISTS (SELECT 1 FROM duel_artwork_objects objects
-                        WHERE objects.bucket = %s AND objects.path = artwork.path)
+                        WHERE objects.bucket = %s AND objects.path = artwork.path
+                        AND objects.sha256 = encode(sha256(artwork.image),'hex')
+                        AND objects.size = octet_length(artwork.image))
                         ORDER BY path LIMIT %s""", (cursor,target.bucket,batch_size)).fetchall()
                 if not batch: break
                 cursor = batch[-1][0]
