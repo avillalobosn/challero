@@ -1,5 +1,6 @@
 """Resumable S3 copy and separately verified PostgreSQL pruning."""
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 import secrets
 import time
 
@@ -44,7 +45,7 @@ def s3_artwork(connection, apply=False, batch_size=25, prune=False):
         connection.commit()
     done = skipped = 0
     cursor = ''
-    with maintenance(connection) as owner:
+    with maintenance(connection) as owner, ThreadPoolExecutor(max_workers=4) as transfers:
         while True:
             with connection.transaction():
                 connection.execute('SELECT pg_advisory_xact_lock(6152847002)')
@@ -65,18 +66,24 @@ def s3_artwork(connection, apply=False, batch_size=25, prune=False):
                         WHERE objects.bucket = %s AND objects.path = artwork.path)
                         ORDER BY path LIMIT %s""", (cursor,target.bucket,batch_size)).fetchall()
                 if not batch: break
-                for row in batch:
-                    cursor = path = row[0]
-                    if prune:
+                cursor = batch[-1][0]
+                if prune:
+                    def verified(row):
                         _, digest, length, actual, actual_size = row
-                        if digest != actual or length != actual_size or not target.verified(digest,length):
-                            skipped += 1
-                            continue
-                        connection.execute('DELETE FROM duel_artwork WHERE path = %s AND encode(sha256(image),\'hex\') = %s', (path,digest))
-                    else:
-                        digest,length = target.upload(row[1])
-                        store.save_object(path,digest,length)
-                    done += 1
+                        return digest == actual and length == actual_size and target.verified(digest,length)
+                    checks = list(transfers.map(verified,batch))
+                    deletions = [(row[0],row[1]) for row,valid in zip(batch,checks) if valid]
+                    skipped += len(batch)-len(deletions)
+                    with connection.cursor() as writer:
+                        writer.executemany("DELETE FROM duel_artwork WHERE path = %s AND encode(sha256(image),'hex') = %s", deletions)
+                    done += len(deletions)
+                else:
+                    uploaded = list(transfers.map(lambda row: target.upload(row[1]),batch))
+                    with connection.cursor() as writer:
+                        writer.executemany('INSERT INTO duel_artwork_objects VALUES (%s,%s,%s,%s) '
+                            'ON CONFLICT (bucket,path) DO UPDATE SET sha256=EXCLUDED.sha256, size=EXCLUDED.size',
+                            [(target.bucket,row[0],digest,length) for row,(digest,length) in zip(batch,uploaded)])
+                    done += len(uploaded)
                 store.save('artwork-version.json', {'updated_at': time.time_ns()})
             print(f'Committed {done} {"pruned" if prune else "copied"}; {skipped} retained after failed verification.',flush=True)
     return (f'{done} database copies removed; {skipped} retained.' if prune else
