@@ -2,6 +2,7 @@
 import argparse
 import os
 import time
+import secrets
 
 import psycopg
 
@@ -34,6 +35,8 @@ def refresh(connection, force):
     if not connection.execute('SELECT pg_try_advisory_xact_lock(6152847002)').fetchone()[0]:
         return 'A metadata refresh is already running.'
     store = PostgresStore(connection)
+    if store.runtime_get('maintenance', 'artwork-conversion'):
+        return 'An artwork conversion is running. Try refresh again when it finishes.'
     request = store.read('refresh-request.json', {})
     requested_at = request.get('requested_at', 0)
     completed_at = store.read('refresh-completed.json', {}).get('requested_at', 0)
@@ -99,16 +102,25 @@ def compress_artwork(connection, apply=False, batch_size=25):
     if not apply:
         return (f'{count} JPEGs ({size / 1024 / 1024:.2f} MiB) to replace with WebP. '
                 'Run compress-artwork --apply. Each replacement is saved before its JPEG is deleted.')
-    # A session lock survives batch commits and excludes concurrent refresh workers.
-    locked = connection.execute('SELECT pg_try_advisory_lock(6152847002)').fetchone()[0]
-    connection.commit()
-    if not locked:
-        return 'An artwork refresh or conversion is already running. Try again when it finishes.'
+    # Transaction-pooler-safe lease: no session state is assumed across commits.
+    owner = secrets.token_hex(16)
+    with connection.transaction():
+        if not connection.execute('SELECT pg_try_advisory_xact_lock(6152847002)').fetchone()[0]:
+            return 'An artwork refresh or conversion is already running. Try again when it finishes.'
+        store = PostgresStore(connection)
+        if store.runtime_get('maintenance', 'artwork-conversion'):
+            return 'An artwork conversion is already running. Try again when it finishes.'
+        store.runtime_put('maintenance', 'artwork-conversion', {'owner': owner}, time.time() + 600)
     converted = failed = before = after = 0
     cursor = ''
     try:
         while True:
             with connection.transaction():
+                connection.execute('SELECT pg_advisory_xact_lock(6152847002)')
+                store = PostgresStore(connection)
+                if store.runtime_get('maintenance', 'artwork-conversion') != {'owner': owner}:
+                    raise RuntimeError('Conversion lease expired. Rerun to resume safely.')
+                store.runtime_put('maintenance', 'artwork-conversion', {'owner': owner}, time.time() + 600)
                 images = connection.execute(
                     'SELECT path, image FROM duel_artwork WHERE path ~ %s AND path > %s ORDER BY path LIMIT %s',
                     (pattern, cursor, batch_size),
@@ -143,8 +155,11 @@ def compress_artwork(connection, apply=False, batch_size=25):
             print(f'Committed {converted} converted; {failed} failed. Safe to interrupt and resume.', flush=True)
     finally:
         connection.rollback()
-        connection.execute('SELECT pg_advisory_unlock(6152847002)')
-        connection.commit()
+        with connection.transaction():
+            connection.execute('SELECT pg_advisory_xact_lock(6152847002)')
+            store = PostgresStore(connection)
+            if store.runtime_get('maintenance', 'artwork-conversion') == {'owner': owner}:
+                store.runtime_delete('maintenance', 'artwork-conversion')
     return (f'Replaced {converted} JPEGs: {before / 1024 / 1024:.2f} -> {after / 1024 / 1024:.2f} MiB. '
             f'{failed} failed originals retained. Rerun to retry; completed images are skipped.')
 
