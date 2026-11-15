@@ -77,6 +77,8 @@ def s3_artwork(connection, apply=False, batch_size=25, prune=False):
                     with connection.cursor() as writer:
                         writer.executemany("DELETE FROM duel_artwork WHERE path = %s AND encode(sha256(image),'hex') = %s", deletions)
                     done += len(deletions)
+                    if deletions:
+                        store.save('artwork-storage.json', {'backend': 's3', 'bucket': target.bucket})
                 else:
                     uploaded = list(transfers.map(lambda row: target.upload(row[1]),batch))
                     with connection.cursor() as writer:

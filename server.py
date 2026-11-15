@@ -130,7 +130,7 @@ def sync_token():
         return store.sync_token()
     with LOCK:
         versions = [(name, (DATA / name).stat().st_mtime_ns) for name in
-                    ['collection.json', 'cache.json', 'spanish-names.json', 'refresh-request.json', 'refresh-completed.json', 'artwork-version.json']
+                    ['collection.json', 'cache.json', 'spanish-names.json', 'refresh-request.json', 'refresh-completed.json', 'artwork-version.json', 'artwork-storage.json']
                     if (DATA / name).exists()]
         return hashlib.sha256(repr(versions).encode()).hexdigest()
 

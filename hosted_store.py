@@ -59,7 +59,7 @@ class PostgresStore:
         # Only row versions leave PostgreSQL, never the document bodies.
         rows = self.connection.execute(
             "SELECT name, xmin::text FROM duel_documents WHERE name = ANY(%s) ORDER BY name",
-            (['collection.json', 'cache.json', 'spanish-names.json', 'refresh-request.json', 'refresh-completed.json', 'artwork-version.json'],),
+            (['collection.json', 'cache.json', 'spanish-names.json', 'refresh-request.json', 'refresh-completed.json', 'artwork-version.json', 'artwork-storage.json'],),
         ).fetchall()
         import hashlib
         return hashlib.sha256(repr(rows).encode()).hexdigest()
@@ -83,10 +83,18 @@ class PostgresStore:
                 CROSS JOIN visibility WHERE %s OR visibility.folders ? entries.folder)
         """, ([path, path.removesuffix('.webp') + '.jpg'], admin)).fetchone()[0]
 
+    def s3_enabled(self):
+        from s3_artwork import enabled, ArtworkStorageError
+        if enabled(): return True
+        if not hasattr(self, '_s3_required'):
+            self._s3_required = self.read('artwork-storage.json', {}).get('backend') == 's3'
+        if self._s3_required:
+            raise ArtworkStorageError('This database uses S3 artwork. Configure the DUEL_S3 variables before running artwork operations.')
+        return False
+
     def image_paths(self):
-        from s3_artwork import enabled
         query = 'SELECT path FROM duel_artwork'
-        if enabled():
+        if self.s3_enabled():
             import os
             return {row[0] for row in self.connection.execute(query + ' UNION SELECT path FROM duel_artwork_objects WHERE bucket = %s', (os.environ['DUEL_S3_BUCKET'],))}
         return {row[0] for row in self.connection.execute(query)}
@@ -101,8 +109,8 @@ class PostgresStore:
             'ON CONFLICT (bucket, path) DO UPDATE SET sha256 = EXCLUDED.sha256, size = EXCLUDED.size', (os.environ['DUEL_S3_BUCKET'], path, digest, size))
 
     def image(self, path):
-        from s3_artwork import enabled, storage
-        if enabled() and (record := self.object_record(path)):
+        from s3_artwork import storage
+        if self.s3_enabled() and (record := self.object_record(path)):
             return storage().download(record[0])
         row = self.connection.execute(
             'SELECT image FROM duel_artwork WHERE path = %s', (path,)
@@ -112,8 +120,8 @@ class PostgresStore:
     def save_image(self, path, image):
         if not path.endswith('.webp') or image[:4] != b'RIFF' or image[8:12] != b'WEBP':
             raise ValueError('Only compressed WebP artwork can be stored.')
-        from s3_artwork import enabled, storage
-        if enabled():
+        from s3_artwork import storage
+        if self.s3_enabled():
             digest, size = storage().upload(image)
             self.save_object(path, digest, size)
             return
