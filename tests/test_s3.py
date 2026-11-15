@@ -42,6 +42,19 @@ class S3Tests(unittest.TestCase):
             self.assertFalse(target.verified(digest,5))
             stub.add_client_error('head_object',service_error_code='404',http_status_code=404,expected_params=params)
             self.assertFalse(target.verified(digest,5))
+    def test_missing_s3_config_cannot_recreate_database_image_copies(self):
+        from hosted_store import PostgresStore
+        connection = Mock()
+        connection.execute.return_value.fetchone.return_value = ({'backend':'s3'},)
+        store = PostgresStore(connection)
+        with patch.dict(os.environ, {'DUEL_S3_BUCKET':''}):
+            with self.assertRaises(s3_artwork.ArtworkStorageError):
+                store.save_image('assets/1.webp',self.artwork())
+            with self.assertRaises(s3_artwork.ArtworkStorageError):
+                store.image_paths()
+        self.assertEqual(connection.execute.call_count,1)
+        self.assertNotIn('INSERT',connection.execute.call_args.args[0])
+
     def test_signed_urls_expire_in_two_minutes(self):
         from urllib.parse import urlsplit,parse_qs
         target=s3_artwork.S3Artwork();url=target.signed_url('b'*64)
