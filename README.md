@@ -109,3 +109,7 @@ Deploy the WebP-capable backend before converting the production database. With 
 ```
 
 The converter reads a bounded batch at a time and decodes images individually. Each batch commits separately, and replacement plus deletion is transactional. Interrupting and rerunning skips completed images. Corrupt images are retained and reported. Transaction advisory locks and a renewable database lease prevent concurrent refresh/conversion workers, including through transaction poolers. The command downloads each remaining JPEG once, so conversion itself consumes some database egress. Database disk space becomes reusable after deletion; it may not immediately shrink.
+
+## Private S3 storage
+
+S3 support is optional; without `DUEL_S3_BUCKET` the existing PostgreSQL artwork backend remains active. Follow [the S3 setup and migration guide](docs/S3.md) and use the [bucket-scoped IAM policy](docs/s3-iam-policy.json). Copy and verify images first; enable S3 on Vercel next; prune database copies only after verifying the deployed site.

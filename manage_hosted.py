@@ -12,6 +12,10 @@ import server
 
 def migrate(connection):
     connection.execute(SCHEMA)
+    from s3_artwork import enabled
+    if enabled():
+        from hosted_store import S3_SCHEMA
+        connection.execute(S3_SCHEMA)
     connection.execute('SELECT pg_advisory_xact_lock(6152847001)')
     store = PostgresStore(connection)
     if store.read('collection.json') is not None:
@@ -166,21 +170,26 @@ def compress_artwork(connection, apply=False, batch_size=25):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['migrate', 'refresh', 'check', 'cleanup', 'compress-artwork'])
+    parser.add_argument('action', choices=['migrate', 'refresh', 'check', 'cleanup', 'compress-artwork', 's3-migrate', 's3-prune'])
     parser.add_argument('--force', action='store_true', help='Run a refresh even when none is queued.')
     parser.add_argument('--apply', action='store_true', help='Apply cleanup or artwork conversion; both default to a preview.')
     parser.add_argument('--batch-size', type=int, default=25, help='Conversion batch size (1–100), default 25.')
     args = parser.parse_args()
     if not 1 <= args.batch_size <= 100:
         parser.error('--batch-size must be between 1 and 100.')
-    if args.apply and args.action not in ('cleanup', 'compress-artwork'):
-        parser.error('--apply is only valid with cleanup or compress-artwork.')
+    if args.apply and args.action not in ('cleanup', 'compress-artwork', 's3-migrate', 's3-prune'):
+        parser.error('--apply is only valid with cleanup, compress-artwork, s3-migrate or s3-prune.')
     url = os.getenv('DATABASE_URL')
     if not url:
         parser.error('Set DATABASE_URL before running this command.')
+    from s3_artwork import ArtworkStorageError
+    from botocore.exceptions import BotoCoreError, ClientError
     try:
         with psycopg.connect(connection_url(url), connect_timeout=10, prepare_threshold=None) as connection:
-            if args.action == 'compress-artwork':
+            if args.action in ('s3-migrate', 's3-prune'):
+                from s3_management import s3_artwork
+                message = s3_artwork(connection, args.apply, args.batch_size, prune=args.action == 's3-prune')
+            elif args.action == 'compress-artwork':
                 message = compress_artwork(connection, args.apply, args.batch_size)
             elif args.action == 'cleanup':
                 message = cleanup(connection, args.apply)
@@ -190,6 +199,8 @@ def main():
                 message = migrate(connection)
             else:
                 message = refresh(connection, args.force)
+    except (ArtworkStorageError, BotoCoreError, ClientError):
+        raise SystemExit('S3 operation failed. Check bucket, region and IAM permissions. Database originals were retained for unverified uploads.') from None
     except DatabaseURLConfigurationError as error:
         raise SystemExit(str(error)) from None
     except psycopg.Error as error:

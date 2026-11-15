@@ -271,6 +271,9 @@ def response_headers(content_type, cookie=None):
         'Referrer-Policy': 'same-origin',
         'Content-Security-Policy': "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
     }
+    from s3_artwork import image_origin
+    if origin := image_origin():
+        headers['Content-Security-Policy'] = headers['Content-Security-Policy'].replace("img-src 'self'", "img-src 'self' " + origin)
     if cookie:
         headers['Set-Cookie'] = cookie
     return headers
@@ -313,6 +316,20 @@ class ArchiveRoutes:
             asset_path = f'assets/{card_id}.webp'
             if not image_allowed(asset_path, admin):
                 return self.send(404, {'error': 'Not found'})
+            from s3_artwork import enabled, storage
+            store = HOSTED_STORE.get()
+            if store and enabled():
+                object_path = path.lstrip('/') if thumbnail else asset_path
+                record = store.object_record(object_path)
+                if record is None:
+                    # Generate a missing thumbnail once; future downloads bypass Python.
+                    image = store.image(asset_path)
+                    if image is not None:
+                        store.save_image(object_path, thumbnail_image(image) if thumbnail else image)
+                        record = store.object_record(object_path)
+                if record is not None:
+                    return self.send(302, b'', content_type='image/webp', extra_headers={
+                        'Location': storage().signed_url(record[0]), 'Cache-Control': 'private, no-store'})
             content_type = 'image/webp'
             etag = '"' + hashlib.sha256((sync_token() + path + str(admin)).encode()).hexdigest() + '"'
             image_headers = {'ETag': etag}

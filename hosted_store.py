@@ -27,6 +27,17 @@ CREATE INDEX IF NOT EXISTS duel_runtime_expiry ON duel_runtime (expires_at);
 """
 
 
+S3_SCHEMA = """
+CREATE TABLE IF NOT EXISTS duel_artwork_objects (
+    bucket text NOT NULL,
+    path text NOT NULL,
+    sha256 text NOT NULL,
+    size bigint NOT NULL,
+    PRIMARY KEY (bucket, path)
+);
+"""
+
+
 class PostgresStore:
     def __init__(self, connection):
         self.connection = connection
@@ -66,9 +77,26 @@ class PostgresStore:
         """, (admin, [path, path.removesuffix('.webp') + '.jpg'])).fetchone()[0]
 
     def image_paths(self):
-        return {row[0] for row in self.connection.execute('SELECT path FROM duel_artwork')}
+        from s3_artwork import enabled
+        query = 'SELECT path FROM duel_artwork'
+        if enabled():
+            import os
+            return {row[0] for row in self.connection.execute(query + ' UNION SELECT path FROM duel_artwork_objects WHERE bucket = %s', (os.environ['DUEL_S3_BUCKET'],))}
+        return {row[0] for row in self.connection.execute(query)}
+
+    def object_record(self, path):
+        import os
+        return self.connection.execute('SELECT sha256, size FROM duel_artwork_objects WHERE bucket = %s AND path = %s', (os.environ['DUEL_S3_BUCKET'], path)).fetchone()
+
+    def save_object(self, path, digest, size):
+        import os
+        self.connection.execute('INSERT INTO duel_artwork_objects VALUES (%s, %s, %s, %s) '
+            'ON CONFLICT (bucket, path) DO UPDATE SET sha256 = EXCLUDED.sha256, size = EXCLUDED.size', (os.environ['DUEL_S3_BUCKET'], path, digest, size))
 
     def image(self, path):
+        from s3_artwork import enabled, storage
+        if enabled() and (record := self.object_record(path)):
+            return storage().download(record[0])
         row = self.connection.execute(
             'SELECT image FROM duel_artwork WHERE path = %s', (path,)
         ).fetchone()
@@ -77,6 +105,11 @@ class PostgresStore:
     def save_image(self, path, image):
         if not path.endswith('.webp') or image[:4] != b'RIFF' or image[8:12] != b'WEBP':
             raise ValueError('Only compressed WebP artwork can be stored.')
+        from s3_artwork import enabled, storage
+        if enabled():
+            digest, size = storage().upload(image)
+            self.save_object(path, digest, size)
+            return
         self.connection.execute(
             'INSERT INTO duel_artwork VALUES (%s, %s) '
             'ON CONFLICT (path) DO NOTHING', (path, image)

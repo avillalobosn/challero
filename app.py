@@ -44,6 +44,8 @@ HOSTED_UPLOAD_LIMIT = 4_000_000
 def hosted_request(database_url, routes, path, body=None, client_ip=None):
     from hosted_store import transaction, DatabaseURLConfigurationError
     from psycopg import Error
+    from s3_artwork import ArtworkStorageError
+    from botocore.exceptions import BotoCoreError, ClientError
 
     try:
         with transaction(database_url, write=body is not None,
@@ -53,6 +55,9 @@ def hosted_request(database_url, routes, path, body=None, client_ip=None):
                 return routes.get(path) if body is None else routes.post(path, body, client_ip)
             finally:
                 server.HOSTED_STORE.reset(token)
+    except (ArtworkStorageError, BotoCoreError, ClientError):
+        logging.getLogger(__name__).error('S3 artwork storage is unavailable.')
+        return routes.send(503, {'error': 'Artwork storage is unavailable.'})
     except DatabaseURLConfigurationError:
         logging.getLogger(__name__).error('DATABASE_URL configuration is invalid.')
         return routes.send(503, {'error': 'Hosted database connection URL is invalid.'})
