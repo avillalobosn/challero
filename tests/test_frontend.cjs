@@ -2,14 +2,14 @@
 const vm=require('node:vm'),fs=require('node:fs'),assert=require('node:assert/strict');
 const script=fs.readFileSync('public/app.js','utf8');
 async function fixture(admin=false,denied=false,search="",storage=new Map()){
- let copied="", replaced="";const requests=[],intervals=[],documentEvents=[];
+ let copied="", replaced="",batchCalls=0;const requests=[],intervals=[],documentEvents=[];
  const elements=new Map();
  function element(id){if(!elements.has(id))elements.set(id,{id,value:id==='sort'?'name':'',textContent:'',innerHTML:'',hidden:true,checked:false,open:false,options:[{value:'name'},{value:'value'},{value:'Fixture set'},{value:'SR'},{value:'Monster'},{value:'Spanish'},{value:'English'}],classList:{toggle(){}},add(){},addEventListener(){},scrollIntoView(){},focus(){},showModal(){this.open=true},close(){this.open=false}});return elements.get(id)}
  const row={copies:2,spanish_name:'Carta de prueba','Folder Name':'Visible folder','Quantity':'2','Trade Quantity':'0','Card Name':'<Test Card>','Set Name':'Fixture set','Card Number':'TEST-EN001','Set Code':'TEST','Rarity':'SR','Language':'English','Condition':'NearMint','Printing':'1st Edition',_id:7,info:{image:'assets/1.jpg',thumbnail:'assets/1-thumb-v2.webp',type:'Effect Monster',desc:'Fixture effect'},public_price:null};
  row.reference_prices={match:'matched',set_price:'77.88',fetched_at:1,stale:true,vendors:[{vendor:'TCGplayer',amount:'66.55',currency:'USD'}]};
  if(admin)Object.assign(row,{'Price Bought':'123.45',LOW:'10.11',MID:'20.22',MARKET:'30.33'});
  const response={admin,rows:[row,{...row,_id:8,Language:'Spanish'}],currency:'USD',revision:1,settings:{visible_folders:['Visible folder'],markup:null,currency:'USD'},folders:{'Visible folder':1},cache:{status:'Ready',failures:{}}};
- const context=vm.createContext({document:{getElementById:element,querySelector:element,querySelectorAll:()=>[],addEventListener:name=>documentEvents.push(name),activeElement:null},URL,URLSearchParams,location:{pathname:admin?'/admin':'/',href:'http://localhost/'+search,search},localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},navigator:{clipboard:{writeText:async text=>{copied=text;}}},history:{replaceState:(_a,_b,url)=>{replaced=String(url);}},Option:function(){},fetch:async path=>{requests.push(path);return ({ok:!denied,status:denied?401:200,json:async()=>denied?{error:'Admin login required.'}:response});},setInterval:(...args)=>intervals.push(args),console});
+ const context=vm.createContext({document:{getElementById:element,querySelector:element,querySelectorAll:()=>[],addEventListener:name=>documentEvents.push(name),activeElement:null},URL,URLSearchParams,location:{pathname:admin?'/admin':'/',href:'http://localhost/'+search,search},localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},navigator:{clipboard:{writeText:async text=>{copied=text;}}},history:{replaceState:(_a,_b,url)=>{replaced=String(url);}},Option:function(){},fetch:async path=>{requests.push(path);return ({ok:!denied,status:denied?401:200,json:async()=>denied?{error:'Admin login required.'}:path==='/api/admin/artwork-batch'?{done:++batchCalls>=2,failures:0,message:'Artwork progress'}:response});},setInterval:(...args)=>intervals.push(args),console});
  vm.runInContext(script,context);await new Promise(resolve=>setImmediate(resolve));
  return {context,element,response,storage,requests,intervals,documentEvents,copied:()=>copied,replaced:()=>replaced};
 }
@@ -63,6 +63,12 @@ async function fixture(admin=false,denied=false,search="",storage=new Map()){
  assert.equal(staticPage.intervals.length,0);
  assert.ok(!staticPage.documentEvents.includes('visibilitychange'));
  const admin=await fixture(true);assert.equal(admin.element('adminPanel').hidden,false);assert.equal(admin.element('folders').hidden,false);assert.match(admin.element('grid').innerHTML,/Visible folder/);assert.match(admin.element('adminPanel').innerHTML,/visibleFolder/);vm.runInContext('openCard(7)',admin.context);assert.match(admin.element('detailContent').innerHTML,/123\.45/);assert.match(admin.element('detailContent').innerHTML,/Visible folder/);assert.match(admin.element('detailContent').innerHTML,/77\.88 USD/);assert.match(admin.element('detailContent').innerHTML,/66\.55 USD/);
+ admin.response.hosted=true;
+ await vm.runInContext('processHostedArtwork()',admin.context);
+ assert.equal(admin.requests.filter(path=>path==='/api/admin/artwork-batch').length,2);
+ assert.equal(admin.element('refreshCache').disabled,false);
+ assert.equal(admin.element('csvUpload').disabled,false);
+ assert.equal(admin.intervals.length,0);
  const denied=await fixture(true,true);assert.equal(denied.element('login').hidden,false);assert.equal(denied.element('collectionView').hidden,true);
  console.log('Frontend checks passed: public/admin initialization, redacted details, stable card IDs, escaped CSV content, empty results, and login gate.');
 })().catch(e=>{console.error(e);process.exitCode=1});

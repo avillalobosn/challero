@@ -40,6 +40,11 @@ class ArchiveTests(unittest.TestCase):
         self.cookie=h['Set-Cookie'].split(';')[0]
     def csv(self,rows):
         f=io.StringIO();writer=csv.DictWriter(f,fieldnames=app.HEADERS);writer.writeheader();writer.writerows(rows);return '\ufeff"sep=,"\n'+f.getvalue()
+    def test_artwork_batch_requires_admin_and_hosted_storage(self):
+        self.assertEqual(self.call('/api/admin/artwork-batch',{})[0],401)
+        self.login()
+        self.assertEqual(self.call('/api/admin/artwork-batch',{})[0],400)
+
     def test_public_allowlist_and_offer_price(self):
         status,data,h=self.call('/api/collection');self.assertEqual(status,200);self.assertEqual(len(data['rows']),1)
         row=data['rows'][0];self.assertEqual(row['public_price'],'8.67')

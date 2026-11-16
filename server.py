@@ -412,6 +412,10 @@ class ArchiveRoutes:
                 else:
                     SESSIONS.pop(token, None)
                 return self.send(200, {'ok': True}, cookie=f'duel_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0{secure}')
+            if path=='/api/admin/artwork-batch':
+                if not store: return self.send(400, {'error': 'Hosted artwork batches require hosted storage.'})
+                from artwork_jobs import process_batch
+                return self.send(200, process_batch(store))
             if path=='/api/admin/settings':
                 markup=body.get('markup');currency=body.get('currency','')
                 if markup is not None and (isinstance(markup,bool) or not isinstance(markup,(int,float)) or not math.isfinite(markup) or not 0<=markup<=10000): raise ValueError('Markup must be between 0 and 10,000 percent.')

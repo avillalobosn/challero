@@ -36,7 +36,7 @@ The FastAPI app uses PostgreSQL when `DATABASE_URL` is configured. The database 
 3. Set `DATABASE_URL` and `DUEL_PUBLIC_ORIGIN` in your hosted FastAPI environment. Set the origin to the full HTTPS address that will serve the app, such as `https://your-project.vercel.app`. The app accepts requests for this hostname and requires that origin on admin writes.
 4. Sign in at `/admin` using your existing admin password. Hosted sessions expire after eight hours. CSV previews expire after ten minutes. Hosted CSV uploads must fit within a 4 MB JSON request.
 
-Hosted imports and the refresh button queue metadata and artwork updates. With the same `DATABASE_URL` set, run `.venv/bin/python manage_hosted.py refresh` to process a queued update from your computer or an external scheduler. `--force` requests a refresh even if the queue is empty. Prices calculated from CSV values update as soon as an import is confirmed.
+Hosted imports queue metadata and artwork updates and the admin tab processes them automatically in resumable batches. Keep that tab open until completion; use Refresh to resume if interrupted. Visitor pages do not poll. Each batch reads only the selected cards and downloads at most three missing images, compressing them before S3 upload. The CLI `.venv/bin/python manage_hosted.py refresh` remains an optional worker; load both DATABASE_URL and the S3 variables before running it. Prices calculated from CSV values update as soon as an import is confirmed.
 
 ## Admin and visitor access
 
