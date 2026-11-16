@@ -113,3 +113,19 @@ The converter reads a bounded batch at a time and decodes images individually. E
 ## Private S3 storage
 
 S3 support is optional; without `DUEL_S3_BUCKET` the existing PostgreSQL artwork backend remains active. Follow [the S3 setup and migration guide](docs/S3.md) and use the [bucket-scoped IAM policy](docs/s3-iam-policy.json). Copy and verify images first; enable S3 on Vercel next; prune database copies only after verifying the deployed site.
+
+## Indexed image permissions
+
+Hosted image requests use the primary key of `duel_image_permissions`, rather than expanding collection and cache JSON documents per request. Database triggers rebuild this small index atomically when collection rows, folder visibility or card metadata change, including raw SQL updates from artwork batches. Shared artwork is public if any currently visible entry uses it; admin access still requires an active collection entry. Row-level security blocks direct API enumeration.
+
+Before deploying this version to an existing database, run with DATABASE_URL configured:
+
+```sh
+.venv/bin/python manage_hosted.py permissions-migrate
+```
+
+New database migrations include the table and triggers automatically. To run the local PostgreSQL integration checks (including concurrent reads and transactional visibility changes):
+
+```sh
+RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m unittest discover -s tests -p 'test_permissions_integration.py'
+```

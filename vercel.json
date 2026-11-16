@@ -3,7 +3,7 @@
   "functions": {
     "app.py": {
       "excludeFiles": "{data/**,work/**,.venv/**,venv/**,__pycache__/**,**/__pycache__/**,tests/**,.env*}",
-      "includeFiles": "public/**"
+      "includeFiles": "{public/**,image_permissions.sql}"
     }
   },
   "rewrites": [

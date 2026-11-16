@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 import time
 import re
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit, unquote
 
 import psycopg
@@ -38,6 +39,10 @@ CREATE TABLE IF NOT EXISTS duel_artwork_objects (
 """
 
 
+IMAGE_PERMISSIONS_SCHEMA = Path(__file__).with_name('image_permissions.sql').read_text()
+SCHEMA += IMAGE_PERMISSIONS_SCHEMA
+
+
 class PostgresStore:
     def __init__(self, connection):
         self.connection = connection
@@ -65,23 +70,11 @@ class PostgresStore:
         return hashlib.sha256(repr(rows).encode()).hexdigest()
 
     def image_allowed(self, path, admin):
-        return self.connection.execute("""
-            WITH matched AS MATERIALIZED (
-                SELECT card.key AS name FROM duel_documents cache
-                CROSS JOIN LATERAL jsonb_each(cache.value->'cards') card
-                WHERE cache.name = 'cache.json' AND card.value->>'image' = ANY(%s)
-            ), entries AS MATERIALIZED (
-                SELECT entry->>'Card Name' AS name, entry->>'Folder Name' AS folder
-                FROM duel_documents collection
-                CROSS JOIN LATERAL jsonb_array_elements(collection.value->'rows') entry
-                WHERE collection.name = 'collection.json'
-            ), visibility AS MATERIALIZED (
-                SELECT value->'settings'->'visible_folders' AS folders
-                FROM duel_documents WHERE name = 'collection.json'
-            )
-            SELECT EXISTS (SELECT 1 FROM entries JOIN matched USING (name)
-                CROSS JOIN visibility WHERE %s OR visibility.folders ? entries.folder)
-        """, ([path, path.removesuffix('.webp') + '.jpg'], admin)).fetchone()[0]
+        canonical = path.removesuffix('.jpg') + '.webp' if path.endswith('.jpg') else path
+        return self.connection.execute(
+            'SELECT EXISTS (SELECT 1 FROM public.duel_image_permissions '
+            'WHERE path = %s AND (%s OR public_visible))', (canonical, admin),
+        ).fetchone()[0]
 
     def s3_enabled(self):
         from s3_artwork import enabled, ArtworkStorageError

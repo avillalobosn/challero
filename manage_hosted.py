@@ -75,6 +75,14 @@ def check(connection):
     return f"Connected. Migration complete. Collection contains {len(collection['rows'])} entries."
 
 
+def migrate_permissions(connection):
+    from hosted_store import IMAGE_PERMISSIONS_SCHEMA
+    connection.execute(IMAGE_PERMISSIONS_SCHEMA)
+    connection.execute('SELECT public.duel_rebuild_image_permissions()')
+    total, visible = connection.execute('SELECT count(*), count(*) FILTER (WHERE public_visible) FROM public.duel_image_permissions').fetchone()
+    return f'Indexed {total} image permissions ({visible} public). Future collection and metadata changes update permissions atomically.'
+
+
 def cleanup(connection, apply=False):
     # Match only the obsolete format. Originals and current v2 thumbnails stay intact.
     pattern = r'^assets/[0-9]+-thumb\.webp$'
@@ -170,7 +178,7 @@ def compress_artwork(connection, apply=False, batch_size=25):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['migrate', 'refresh', 'check', 'cleanup', 'compress-artwork', 's3-migrate', 's3-prune'])
+    parser.add_argument('action', choices=['migrate', 'refresh', 'check', 'cleanup', 'compress-artwork', 's3-migrate', 's3-prune', 'permissions-migrate'])
     parser.add_argument('--force', action='store_true', help='Run a refresh even when none is queued.')
     parser.add_argument('--apply', action='store_true', help='Apply cleanup or artwork conversion; both default to a preview.')
     parser.add_argument('--batch-size', type=int, default=25, help='Conversion batch size (1–100), default 25.')
@@ -186,7 +194,9 @@ def main():
     from botocore.exceptions import BotoCoreError, ClientError
     try:
         with psycopg.connect(connection_url(url), connect_timeout=10, prepare_threshold=None) as connection:
-            if args.action in ('s3-migrate', 's3-prune'):
+            if args.action == 'permissions-migrate':
+                message = migrate_permissions(connection)
+            elif args.action in ('s3-migrate', 's3-prune'):
                 from s3_management import s3_artwork
                 message = s3_artwork(connection, args.apply, args.batch_size, prune=args.action == 's3-prune')
             elif args.action == 'compress-artwork':
