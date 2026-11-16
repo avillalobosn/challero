@@ -333,21 +333,6 @@ function renderAdmin(){
  $('refreshCache').onclick=async()=>{try{const result=await request('/api/admin/refresh',{});notify(result.queued?'Metadata and artwork refresh queued.':result.started?'Price and metadata refresh started. Reopen a card after completion to see updated references.':'A cache refresh is already running.')}catch(e){notify(e.message,true)}};
 }
 function showCache(cache){if(!$('cacheStatus'))return;$('cacheStatus').textContent=cache.status||'Ready';$('cacheExtra').textContent=[cache.error,cache.refresh_pending?'A metadata and artwork refresh is queued.':'',cache.price_coverage?Object.entries(cache.price_coverage).map(([status,count])=>num(count)+' '+status).join(' · ')+' collection price entries.':'',cache.unmatched?.length?'No database match: '+cache.unmatched.join(', '):'',Object.keys(cache.failures||{}).length+' artwork downloads pending.',cache.last_refresh?'Metadata checked: '+new Date(cache.last_refresh*1000).toLocaleString():''].filter(Boolean).join(' ')}
-let polling=false;
-async function checkForUpdates() {
-    if (document.hidden || polling || !payload || (adminRoute && $('adminPanel').hidden)) return;
-    polling=true;
-    try {
-        const revision=await request(adminRoute?'/api/admin/revision':'/api/revision');
-        if (revision.sync_token !== payload.sync_token) {
-            if ($('detail').open) $('detail').close();
-            await load();
-        }
-    } catch(e) {
-        if(adminRoute&&e.status===401){showLogin();notify('Your admin session ended. Sign in again.',true);}
-    } finally { polling=false; }
-}
-setInterval(checkForUpdates,60000);
-document.addEventListener?.('visibilitychange',()=>{if(!document.hidden)checkForUpdates();});
-
+// Load once. Confirmed admin imports/settings explicitly reload their own view.
+// Visitor tabs fetch a new collection only when the page is reloaded.
 load();
