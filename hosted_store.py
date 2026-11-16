@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS duel_artwork_objects (
 
 
 IMAGE_PERMISSIONS_SCHEMA = Path(__file__).with_name('image_permissions.sql').read_text()
-SCHEMA += IMAGE_PERMISSIONS_SCHEMA
+READ_MODELS_SCHEMA = Path(__file__).with_name('read_models.sql').read_text()
+SCHEMA += IMAGE_PERMISSIONS_SCHEMA + READ_MODELS_SCHEMA
 
 
 class PostgresStore:
@@ -64,10 +65,46 @@ class PostgresStore:
         # Only row versions leave PostgreSQL, never the document bodies.
         rows = self.connection.execute(
             "SELECT name, xmin::text FROM duel_documents WHERE name = ANY(%s) ORDER BY name",
-            (['collection.json', 'cache.json', 'spanish-names.json', 'refresh-request.json', 'refresh-completed.json', 'artwork-version.json', 'artwork-storage.json'],),
+            (['collection.json', 'cache.json', 'spanish-names.json', 'refresh-request.json', 'refresh-completed.json', 'artwork-version.json', 'artwork-storage.json', 'read-model-version.json'],),
         ).fetchall()
         import hashlib
         return hashlib.sha256(repr(rows).encode()).hexdigest()
+
+    def collection_cache_key(self, admin, token):
+        import os
+        info=self.connection.info
+        return (info.host,info.port,info.dbname,info.user,os.getenv('DUEL_S3_BUCKET',''),bool(admin),token)
+
+    def collection_inputs(self, admin):
+        head=self.connection.execute("SELECT value FROM public.duel_read_heads WHERE name='collection.json'").fetchone()
+        state=dict(head[0]) if head else {'settings':{'visible_folders':[],'currency':'USD'},'revision':0}
+        visible=state['settings']['visible_folders']
+        entries=self.connection.execute("SELECT position,CASE WHEN %s THEN row_data ELSE row_data - ARRAY['Folder Name','MID','Price Bought','Date Bought']::text[] END "
+            'FROM public.duel_collection_entries WHERE %s OR folder=ANY(%s) ORDER BY position',(admin,admin,visible)).fetchall()
+        state['rows']=[row for _,row in entries]
+        names=list({row['Card Name'] for _,row in entries})
+        metadata=self.connection.execute("SELECT metadata.name, "
+            "CASE WHEN %s THEN metadata.info ELSE metadata.info-'pricing' END, "
+            "coalesce(spanish.name,'') FROM public.duel_card_metadata metadata "
+            "LEFT JOIN public.duel_spanish_names spanish ON spanish.id=metadata.info->>'id' "
+            "WHERE metadata.name=ANY(%s)",(admin,names)).fetchall()
+        cards={name:info for name,info,_ in metadata}
+        spanish={str(info.get('id')):translated for _,info,translated in metadata}
+        cache={}
+        if admin:
+            summary=self.connection.execute("SELECT value FROM public.duel_read_heads WHERE name='cache.json'").fetchone()
+            if summary:cache=dict(summary[0])
+        cache['cards']=cards
+        paths=list({str(Path(info['image']).with_suffix('.webp')) for info in cards.values() if info.get('image')})
+        if self.s3_enabled():
+            import os
+            found=self.connection.execute('SELECT path FROM duel_artwork WHERE path=ANY(%s) UNION '
+                'SELECT path FROM duel_artwork_objects WHERE bucket=%s AND path=ANY(%s)',
+                (paths,os.environ['DUEL_S3_BUCKET'],paths)).fetchall()
+        else:
+            found=self.connection.execute('SELECT path FROM duel_artwork WHERE path=ANY(%s)',(paths,)).fetchall()
+        images={row[0] for row in found}
+        return state,cache,spanish,images,[position for position,_ in entries]
 
     def image_allowed(self, path, admin):
         canonical = path.removesuffix('.jpg') + '.webp' if path.endswith('.jpg') else path
@@ -98,8 +135,12 @@ class PostgresStore:
 
     def save_object(self, path, digest, size):
         import os
-        self.connection.execute('INSERT INTO duel_artwork_objects VALUES (%s, %s, %s, %s) '
-            'ON CONFLICT (bucket, path) DO UPDATE SET sha256 = EXCLUDED.sha256, size = EXCLUDED.size', (os.environ['DUEL_S3_BUCKET'], path, digest, size))
+        changed = self.connection.execute('INSERT INTO duel_artwork_objects VALUES (%s, %s, %s, %s) '
+            'ON CONFLICT (bucket, path) DO UPDATE SET sha256 = EXCLUDED.sha256, size = EXCLUDED.size '
+            'WHERE duel_artwork_objects.sha256 IS DISTINCT FROM excluded.sha256 OR duel_artwork_objects.size IS DISTINCT FROM excluded.size '
+            'RETURNING path', (os.environ['DUEL_S3_BUCKET'], path, digest, size)).fetchone()
+        if changed and re.fullmatch(r'assets/[0-9]+[.]webp',path):
+            self.save('artwork-version.json', {'updated_at':time.time_ns()})
 
     def image(self, path):
         from s3_artwork import storage

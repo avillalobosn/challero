@@ -36,27 +36,22 @@ def migrate(connection):
 
 
 def refresh(connection, force):
-    if not connection.execute('SELECT pg_try_advisory_xact_lock(6152847002)').fetchone()[0]:
-        return 'A metadata refresh is already running.'
+    from artwork_jobs import process_batch
     store = PostgresStore(connection)
-    if store.runtime_get('maintenance', 'artwork-conversion'):
-        return 'An artwork conversion is running. Try refresh again when it finishes.'
-    request = store.read('refresh-request.json', {})
-    requested_at = request.get('requested_at', 0)
-    completed_at = store.read('refresh-completed.json', {}).get('requested_at', 0)
-    if not force and requested_at <= completed_at:
-        return 'No refresh is queued.'
-
-    token = server.HOSTED_STORE.set(store)
-    try:
-        server.refresh_cache(force or request.get('force', False))
-        cache = store.read('cache.json', {})
-        if cache.get('error') or cache.get('failures'):
-            return 'Refresh completed with errors. See admin for details. The request remains queued.'
-        store.save('refresh-completed.json', {'requested_at': requested_at})
-        return 'Hosted metadata and artwork refreshed.'
-    finally:
-        server.HOSTED_STORE.reset(token)
+    if force:
+        store.save('refresh-request.json', {'requested_at': time.time(), 'force': True})
+    connection.commit()
+    while True:
+        with connection.transaction():
+            result = process_batch(store)
+        if result.get('busy'):
+            return result['message']
+        if result['done']:
+            summary = connection.execute("SELECT value FROM public.duel_read_heads WHERE name='cache.json'").fetchone()
+            if result.get('failures') or (summary and summary[0].get('error')):
+                return 'Refresh completed with errors. See admin for details. Completed batches are saved.'
+            return 'Hosted metadata and artwork refreshed.'
+        print(result['message'], flush=True)
 
 
 def check(connection):
@@ -81,6 +76,17 @@ def migrate_permissions(connection):
     connection.execute('SELECT public.duel_rebuild_image_permissions()')
     total, visible = connection.execute('SELECT count(*), count(*) FILTER (WHERE public_visible) FROM public.duel_image_permissions').fetchone()
     return f'Indexed {total} image permissions ({visible} public). Future collection and metadata changes update permissions atomically.'
+
+
+def migrate_read_models(connection):
+    from hosted_store import READ_MODELS_SCHEMA
+    connection.execute(READ_MODELS_SCHEMA)
+    for name in ('collection.json','cache.json','catalog.json','spanish-names.json'):
+        connection.execute('SELECT public.duel_project_document(name,value) FROM duel_documents WHERE name=%s',(name,))
+    for table in ('duel_collection_entries','duel_card_metadata','duel_catalog_cards','duel_spanish_names'):
+        connection.execute('ANALYZE public.'+table)
+    PostgresStore(connection).save('read-model-version.json', {'updated_at':time.time_ns()})
+    return 'Indexed collection, card metadata, catalog and translations. Future changes synchronize atomically.'
 
 
 def cleanup(connection, apply=False):
@@ -178,7 +184,7 @@ def compress_artwork(connection, apply=False, batch_size=25):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['migrate', 'refresh', 'check', 'cleanup', 'compress-artwork', 's3-migrate', 's3-prune', 'permissions-migrate'])
+    parser.add_argument('action', choices=['migrate', 'refresh', 'check', 'cleanup', 'compress-artwork', 's3-migrate', 's3-prune', 'permissions-migrate', 'read-models-migrate'])
     parser.add_argument('--force', action='store_true', help='Run a refresh even when none is queued.')
     parser.add_argument('--apply', action='store_true', help='Apply cleanup or artwork conversion; both default to a preview.')
     parser.add_argument('--batch-size', type=int, default=25, help='Conversion batch size (1–100), default 25.')
@@ -194,7 +200,9 @@ def main():
     from botocore.exceptions import BotoCoreError, ClientError
     try:
         with psycopg.connect(connection_url(url), connect_timeout=10, prepare_threshold=None) as connection:
-            if args.action == 'permissions-migrate':
+            if args.action == 'read-models-migrate':
+                message = migrate_read_models(connection)
+            elif args.action == 'permissions-migrate':
                 message = migrate_permissions(connection)
             elif args.action in ('s3-migrate', 's3-prune'):
                 from s3_management import s3_artwork

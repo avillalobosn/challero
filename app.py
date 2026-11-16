@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Request
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse, Response
+from starlette.middleware.gzip import GZipMiddleware
 
 import server
 
@@ -27,6 +28,8 @@ app = FastAPI(
     redirect_slashes=False,
 )
 
+
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 
 class FastAPIRoutes(server.ArchiveRoutes):
     def __init__(self, request):

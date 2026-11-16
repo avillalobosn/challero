@@ -7,6 +7,14 @@ from psycopg.types.json import Jsonb
 import server
 
 
+BATCH_SQL = """WITH names AS MATERIALIZED (
+        SELECT DISTINCT card_name AS name FROM public.duel_collection_entries
+        WHERE card_name > %s ORDER BY card_name LIMIT 50
+    ) SELECT names.name,catalog.data,cached.info FROM names
+      LEFT JOIN LATERAL (SELECT data FROM public.duel_catalog_cards WHERE name_key=lower(names.name) LIMIT 1) catalog ON true
+      LEFT JOIN LATERAL (SELECT info FROM public.duel_card_metadata WHERE name=names.name LIMIT 1) cached ON true
+      ORDER BY names.name"""
+
 def process_batch(store):
     connection = store.connection
     if not connection.execute('SELECT pg_try_advisory_xact_lock(6152847002)').fetchone()[0]:
@@ -23,16 +31,12 @@ def process_batch(store):
     if job.get('requested_at') != request_id:
         job = {'requested_at': request_id, 'cursor': '', 'processed': 0, 'matched': 0,
                'downloaded': 0, 'unmatched': [], 'failures': {}, 'catalog_error': None}
-        row = connection.execute("SELECT (value->>'updated')::double precision FROM duel_documents WHERE name='catalog.json'").fetchone()
+        row = connection.execute("SELECT (value->>'updated')::double precision FROM public.duel_read_heads WHERE name='catalog.json'").fetchone()
         updated = row[0] if row else 0
-        missing = connection.execute("""WITH cached AS MATERIALIZED (
-            SELECT value->'cards' AS cards,coalesce(value->'unmatched','[]'::jsonb) AS unmatched
-            FROM duel_documents WHERE name='cache.json'
-        ), names AS MATERIALIZED (SELECT DISTINCT entry->>'Card Name' AS name
-            FROM duel_documents collection CROSS JOIN LATERAL jsonb_array_elements(collection.value->'rows') entry
-            WHERE collection.name='collection.json')
-            SELECT EXISTS(SELECT 1 FROM names,cached WHERE NOT cached.cards ? names.name
-                AND NOT cached.unmatched ? names.name)""").fetchone()[0]
+        missing = connection.execute("""SELECT EXISTS (SELECT 1 FROM public.duel_collection_entries entry
+            WHERE NOT EXISTS (SELECT 1 FROM public.duel_card_metadata metadata WHERE metadata.name=entry.card_name)
+            AND NOT EXISTS (SELECT 1 FROM public.duel_read_heads cache WHERE cache.name='cache.json'
+                AND coalesce(cache.value->'unmatched','[]'::jsonb) ? entry.card_name))""").fetchone()[0]
         # New names may have been added upstream since a recent catalog refresh.
         if requested.get('force') or not updated or time.time()-updated > server.CATALOG_TTL or missing:
             try:
@@ -53,20 +57,7 @@ def process_batch(store):
         return {'done': True, 'processed': job['processed'], 'failures': len(job['failures']),
                 'message': 'Some artwork needs a retry. Press Refresh to retry failed downloads.'}
 
-    batch = connection.execute("""WITH names AS MATERIALIZED (
-        SELECT DISTINCT entry->>'Card Name' AS name FROM duel_documents collection
-        CROSS JOIN LATERAL jsonb_array_elements(collection.value->'rows') entry
-        WHERE collection.name='collection.json' AND entry->>'Card Name' > %s
-        ORDER BY name LIMIT 50
-    ), catalog AS MATERIALIZED (
-        SELECT card->>'name' AS name,card FROM duel_documents source
-        CROSS JOIN LATERAL jsonb_array_elements(source.value->'data') card WHERE source.name='catalog.json'
-    ), cached AS MATERIALIZED (
-        SELECT card.key AS name,card.value AS info FROM duel_documents source
-        CROSS JOIN LATERAL jsonb_each(source.value->'cards') card WHERE source.name='cache.json'
-    ) SELECT names.name,catalog.card,cached.info FROM names
-      LEFT JOIN catalog ON lower(catalog.name)=lower(names.name)
-      LEFT JOIN cached ON cached.name=names.name ORDER BY names.name""", (job['cursor'],)).fetchall()
+    batch = connection.execute(BATCH_SQL, (job['cursor'],)).fetchall()
 
     paths = [f"assets/{int((card or info)['id'])}.webp" for _,card,info in batch if (card or info or {}).get('id')]
     if uses_s3:

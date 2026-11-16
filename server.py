@@ -130,7 +130,7 @@ def sync_token():
         return store.sync_token()
     with LOCK:
         versions = [(name, (DATA / name).stat().st_mtime_ns) for name in
-                    ['collection.json', 'cache.json', 'spanish-names.json', 'refresh-request.json', 'refresh-completed.json', 'artwork-version.json', 'artwork-storage.json']
+                    ['collection.json', 'cache.json', 'spanish-names.json', 'refresh-request.json', 'refresh-completed.json', 'artwork-version.json', 'artwork-storage.json', 'read-model-version.json']
                     if (DATA / name).exists()]
         return hashlib.sha256(repr(versions).encode()).hexdigest()
 
@@ -146,14 +146,26 @@ def image_allowed(path, admin):
 
 def collection_payload(admin=False):
     with LOCK:
-        state = read('collection.json', {'rows': [], 'settings': {'visible_folders': [], 'markup': None, 'currency': 'USD'}, 'revision': 0}); cache = read('cache.json', {'cards':{}})
         store = HOSTED_STORE.get()
-        hosted_images = store.image_paths() if store else None
-        spanish_names = read('spanish-names.json', {})
+        cache_key = None
+        if store:
+            from collection_cache import COLLECTION_CACHE
+            token=store.sync_token()
+            cache_key=store.collection_cache_key(admin,token)
+            cached=COLLECTION_CACHE.get(cache_key)
+            store.collection_cache_hit = cached is not None
+            if cached is not None:return cached
+            state,cache,spanish_names,hosted_images,positions=store.collection_inputs(admin)
+        else:
+            state = read('collection.json', {'rows': [], 'settings': {'visible_folders': [], 'markup': None, 'currency': 'USD'}, 'revision': 0})
+            cache = read('cache.json', {'cards':{}})
+            spanish_names = read('spanish-names.json', {})
+            hosted_images = None
+            positions = range(len(state['rows']))
         visible = set(state['settings']['visible_folders'])
         result = []
-        for i, r in enumerate(state['rows']):
-            if not admin and r['Folder Name'] not in visible: continue
+        for i, r in zip(positions,state['rows']):
+            if not admin and not store and r['Folder Name'] not in visible: continue
             item = dict(r) if admin else {k:r[k] for k in PUBLIC_FIELDS}
             info = dict(cache['cards'].get(r['Card Name'], {}))
             item['spanish_name'] = spanish_names.get(str(info.get('id')), '')
@@ -172,7 +184,7 @@ def collection_payload(admin=False):
                     info['thumbnail'] = str(Path(image).with_suffix('')) + '-thumb-v2.webp'
             item.update(_id=i, info=info, public_price=public_price(r, state['settings']))
             result.append(item)
-        response = {'rows':result, 'currency':state['settings']['currency'], 'revision':state['revision'], 'sync_token':sync_token(), 'admin':admin}
+        response = {'rows':result, 'currency':state['settings']['currency'], 'revision':state['revision'], 'sync_token':token if store else sync_token(), 'admin':admin}
         if admin:
             if store:
                 requested = read('refresh-request.json', {}).get('requested_at', 0)
@@ -180,6 +192,7 @@ def collection_payload(admin=False):
                 cache['refresh_pending'] = requested > completed
                 response['hosted'] = True
             response.update(settings=state['settings'], folders=dict(Counter(r['Folder Name'] for r in state['rows'])), cache={k:v for k,v in cache.items() if k!='cards'})
+        if cache_key is not None: COLLECTION_CACHE.put(cache_key,response)
         return response
 
 def summarize(old, new):
@@ -306,8 +319,12 @@ class ArchiveRoutes:
         admin = bool(self.session())
         if path=='/api/revision': return self.send(200, {'sync_token': sync_token()})
         if path=='/api/admin/revision': return self.send(200, {'sync_token': sync_token()}) if admin else self.send(401, {'error': 'Admin login required.'})
-        if path=='/api/collection': return self.send(200,collection_payload(False))
-        if path=='/api/admin': return self.send(200,collection_payload(True)) if admin else self.send(401,{'error':'Admin login required.'})
+        if path in ('/api/collection','/api/admin'):
+            if path=='/api/admin' and not admin: return self.send(401,{'error':'Admin login required.'})
+            payload=collection_payload(path=='/api/admin')
+            store=HOSTED_STORE.get()
+            headers={'X-Collection-Cache':'HIT' if store.collection_cache_hit else 'MISS'} if store else None
+            return self.send(200,payload,extra_headers=headers)
         if path.startswith('/assets/'):
             file=path.removeprefix('/assets/')
             thumbnail = file.endswith('-thumb-v2.webp')

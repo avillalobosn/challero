@@ -116,7 +116,7 @@ S3 support is optional; without `DUEL_S3_BUCKET` the existing PostgreSQL artwork
 
 ## Indexed image permissions
 
-Hosted image requests use the primary key of `duel_image_permissions`, rather than expanding collection and cache JSON documents per request. Database triggers rebuild this small index atomically when collection rows, folder visibility or card metadata change, including raw SQL updates from artwork batches. Shared artwork is public if any currently visible entry uses it; admin access still requires an active collection entry. Row-level security blocks direct API enumeration.
+Hosted image requests use the primary key of `duel_image_permissions`, rather than expanding collection and cache JSON documents per image request. Database triggers rebuild this small index atomically when collection rows, folder visibility or card metadata change, including raw SQL updates from artwork batches. Shared artwork is public if any currently visible entry uses it; admin access still requires an active collection entry. Row-level security blocks direct API enumeration.
 
 Before deploying this version to an existing database, run with DATABASE_URL configured:
 
@@ -129,3 +129,17 @@ New database migrations include the table and triggers automatically. To run the
 ```sh
 RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m unittest discover -s tests -p 'test_permissions_integration.py'
 ```
+
+## Indexed catalog and bounded collection caching
+
+Run `manage_hosted.py read-models-migrate` with DATABASE_URL set before deploying this version to an existing database. This creates indexed collection rows, per-card metadata, catalog cards and translations. Authoritative JSON documents remain compatible with the CLI; database triggers synchronize the projections in the same transaction. Artwork batches fetch at most 50 indexed card records and download at most three missing images, without expanding the catalog document on each batch.
+
+Collection responses use a process-local cache capped at four compressed entries / 12 MiB. Every request checks document versions in its consistent database snapshot before using a cache entry. Keys separate databases, public/admin scopes and S3 buckets. Visibility, CSV, metadata and translation updates invalidate entries immediately after commit. Warm requests read only the version token. Cold public requests fetch only visible rows, matching card metadata without vendor pricing, matching translations and required artwork paths. Public browser responses remain uncached (`no-store`); server responses advertise `X-Collection-Cache: HIT` or `MISS` for diagnostics. Gzip reduces HTTP payload sizes when accepted by the client.
+
+Run the opt-in PostgreSQL/HTTP load test locally:
+
+```sh
+RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m unittest discover -s tests -p 'test_read_models_integration.py'
+```
+
+It tests a 6,000-row CSV, a 12,000-card catalog, public/admin isolation, committed/rolled-back invalidation, translations, metadata and artwork repairs, HTTP upload/gzip, concurrent image access and concurrent collection reads. The report is written to ignored `work/read_models_benchmark.json`. Transfer counts estimate application data, excluding wire-protocol overhead. Memory/swap results describe the isolated local PostgreSQL processes, not the managed Supabase instance.
