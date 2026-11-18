@@ -44,7 +44,7 @@ Sign in to see all folders, all source price fields, CSV import controls, cache 
 
 Visitors receive only visible collection entries and safe card/printing details. Storage folder names are admin-only: they are excluded from public API responses, cards, detail views, other-entry links, and navigation. Their API response excludes Price Bought, LOW, MID, MARKET, and Date Bought. Counts, searches, and other-printing links use only visible entries. The user endpoint stays redacted even when opened by a signed-in administrator. Source collection JSON, credentials, database files, and private-only artwork cannot be downloaded through the server.
 
-Visitor offers use (LOW + MARKET) / 2 from the uploaded CSV, rounded to cents. Rows missing either input display **Ask for price**. The visitor view groups by card and set, lists variants, and omits stock quantities and collection totals.
+Visitor offers use `max((LOW + MARKET) / 2, minimum USD price)` from the uploaded CSV. In `/admin`, set the minimum per copy in USD (default 0), an optional manual rate in CLP per USD, and the display currency (USD or CLP). USD is rounded to cents; CLP multiplies the unrounded USD offer by the configured rate and rounds to whole pesos. CLP requires a positive rate; there is no automatic exchange-rate update. Rows missing either CSV input display **Ask for price**, even with a minimum configured. Settings survive CSV imports. The visitor view groups by card and set, shows total copies in both list and image views, lists variants, and hides owned/trade breakdowns and collection totals.
 
 Use this server-based version for the two views. The earlier standalone HTML export is an older snapshot containing the full collection and does not provide this access separation.
 
@@ -91,7 +91,7 @@ Tests cover public data filtering, admin authentication, raw-file/private-artwor
 
 Admin card details now include YGOPRODeck reference pricing. A set-level price is selected only when both the full Card Number (e.g. TN19-EN012) and rarity match one API set entry. Multiple matches are marked ambiguous, and missing, invalid, or zero prices are unavailable. This match does not verify edition, language, condition, or alternate artwork. General vendor quotes are labeled separately as lowest prices across versions. USD and EUR quotes keep their source currencies; no conversion is performed.
 
-Reference prices are private to admin. The public API strips all pricing metadata, including general vendor quotes. CSV LOW/MID/MARKET and purchase prices are preserved. Public offers use the average of LOW and MARKET from the uploaded CSV.
+Reference prices are private to admin. The public API strips all pricing metadata, including general vendor quotes. CSV LOW/MID/MARKET and purchase prices are preserved. Public offers use the CSV LOW/MARKET average with the configured minimum and optional CLP conversion.
 
 The existing refresh button refreshes reference prices and metadata together and reuses artwork. On startup/import the shared catalog refreshes when older than 48 hours; it is not a scheduled task. YGOPRODeck itself documents up to two days of endpoint caching. The displayed fetch timestamp tells you when this app retrieved data, not when a sale occurred. Old prices remain available and are marked stale after 48 hours if refreshes fail. Reopen a card after a background refresh completes to see the newest references.
 
@@ -143,3 +143,5 @@ RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m unittest discover -s tests -p 'te
 ```
 
 It tests a 6,000-row CSV, a 12,000-card catalog, public/admin isolation, committed/rolled-back invalidation, translations, metadata and artwork repairs, HTTP upload/gzip, concurrent image access and concurrent collection reads. The report is written to ignored `work/read_models_benchmark.json`. Transfer counts estimate application data, excluding wire-protocol overhead. Memory/swap results describe the isolated local PostgreSQL processes, not the managed Supabase instance.
+
+Collection filters include a separate set name/code search and card subtypes (Xyz, Synchro, Pendulum, Fusion, Ritual, Link, Continuous, Quick-Play, Counter, Field, and others present in the collection). Subtypes follow the selected card type and use cached YGOPRODeck metadata. Set searches and subtype selections are preserved in shareable URLs. The header theme toggle remembers light/dark preference in this browser. The brand returns to `/`; admin access remains directly at `/admin`, without a public sign-in button.

@@ -3,7 +3,7 @@ let rows=[], folders=[], payload; const adminRoute=location.pathname.replace(/\/
 async function request(path,body){const r=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json','X-Requested-With':'DuelArchive'}:{},body:body?JSON.stringify(body):undefined});const data=await r.json();if(!r.ok){const error=new Error(data.error||'Request failed');error.status=r.status;throw error;}return data;}
 function showLogin(){rows=[];folders=[];if($('detail').open)$('detail').close();$('detailContent').innerHTML='';$('folders').innerHTML='';$('allCount').textContent='';$('sidebarFolderCount').textContent='';$('folderHeading').hidden=true;$('folders').hidden=true;$('folderStat').hidden=true;$('adminPanel').innerHTML='';$('login').hidden=false;$('collectionView').hidden=true;$('adminPanel').hidden=true;}
 function notify(text,error=false){$('message').hidden=false;$('message').textContent=text;$('message').classList.toggle('error',error)}
-async function load(){try{payload=await request(adminRoute?'/api/admin':'/api/collection');$('login').hidden=true;$('collectionView').hidden=false;rows=payload.rows;folders=payload.admin?[...new Set(rows.map(r=>r['Folder Name']))].sort((a,b)=>a.localeCompare(b)):[];initialize();if(adminRoute)renderAdmin();else{$('viewLink').href='/admin';}}catch(e){if(adminRoute&&e.status===401)showLogin();else notify(e.message,true);}}
+async function load(){try{payload=await request(adminRoute?'/api/admin':'/api/collection');$('login').hidden=true;$('collectionView').hidden=false;rows=payload.rows;folders=payload.admin?[...new Set(rows.map(r=>r['Folder Name']))].sort((a,b)=>a.localeCompare(b)):[];initialize();if(adminRoute)renderAdmin();}catch(e){if(adminRoute&&e.status===401)showLogin();else notify(e.message,true);}}
 let showImages=false;
 let folder='',page=1,filtered=[],lastFocus;const pageSize=30;
 let language = !adminRoute && globalThis.localStorage?.getItem('duel-language') === 'es' ? 'es' : 'en';
@@ -25,7 +25,7 @@ const price = n => n !== '' && n != null
     ? Number(n).toLocaleString(language, {minimumFractionDigits:2,maximumFractionDigits:2})
     : 'Not recorded';
 const offer = r => r.public_price == null ? t('Ask for price')
-    : (r.price_varies ? t('From') + ' ' : '') + price(r.public_price) + ' ' + payload.currency;
+    : (r.price_varies ? t('From') + ' ' : '') + Number(r.public_price).toLocaleString(language,{minimumFractionDigits:payload.currency==='CLP'?0:2,maximumFractionDigits:payload.currency==='CLP'?0:2}) + ' ' + payload.currency;
 
 const rarityNames = {
     C:['Common','Común'], R:['Rare','Rara'], SR:['Super Rare','Súper rara'], UR:['Ultra Rare','Ultra rara'],
@@ -95,7 +95,6 @@ function localizeVisitor() {
         ['aside footer small','Private. Unpublished. Yours.','Privada. Sin publicar. Tuya.'],
         ['#creditsLabel','Card data & artwork:','Datos e imágenes:'],
         ['#artNote','· Representative card artwork.','· Imagen representativa de la carta.'],
-        ['#viewLink','ADMIN SIGN IN →','ACCESO DE ADMINISTRACIÓN →'],
         ['#sort option[value="name"]','Name: A–Z','Nombre: A–Z'],
         ['#sort option[value="value"]','Price: high–low','Precio: de mayor a menor']
     ]) {
@@ -121,6 +120,28 @@ $('language').onclick = () => {
     initialize();
 };
 
+
+const subtypeLabels = {xyz:['Xyz','Xyz'],synchro:['Synchro','Sincronía'],pendulum:['Pendulum','Péndulo'],fusion:['Fusion','Fusión'],ritual:['Ritual','Ritual'],link:['Link','Enlace'],continuous:['Continuous','Continua'],quickplay:['Quick-Play','Juego rápido'],counter:['Counter','Contraefecto'],field:['Field','Campo'],equip:['Equip','Equipo'],normal:['Normal','Normal'],effect:['Effect','Efecto']};
+function cardSubtypes(r) {
+    const type=normalize(r.info.type),race=normalize(r.info.race);
+    if(type.includes('monster')) return ['xyz','synchro','pendulum','fusion','ritual','link','normal','effect'].filter(key=>type.includes(key));
+    return Object.keys(subtypeLabels).filter(key=>race.replace(/[- ]/g,'')===key);
+}
+function refreshSubtypes(){
+    const eligible=rows.filter(r=>!$('type').value||(r.info.type||'').includes($('type').value));
+    const keys=new Set(eligible.flatMap(cardSubtypes));
+    fillOptions('subtype',Object.entries(subtypeLabels).filter(([key])=>keys.has(key)).map(([key,label])=>[key,label[language==='es'?1:0]]),language==='es'?'Todos los subtipos':'All subtypes');
+}
+let theme=globalThis.localStorage?.getItem('duel-theme')==='light'?'light':'dark';
+function applyTheme(){
+    if(document.documentElement) document.documentElement.dataset.theme=theme;
+    $('theme').textContent=theme==='dark'?(language==='es'?'Modo claro':'Light mode'):(language==='es'?'Modo oscuro':'Dark mode');
+    $('theme').setAttribute?.('aria-pressed',String(theme==='light'));
+}
+$('theme').onclick=()=>{theme=theme==='dark'?'light':'dark';globalThis.localStorage?.setItem('duel-theme',theme);applyTheme()};
+applyTheme();
+$('type').addEventListener('change',()=>{refreshSubtypes();update()});
+
 function initialize(){
 $('folderHeading').hidden=!payload.admin;$('folders').hidden=!payload.admin;$('folderStat').hidden=!payload.admin;$('stats').hidden=!payload.admin;
 if (!restoredSearch && !adminRoute) { const lang=new URLSearchParams(location.search || '').get('lang'); if (['en','es'].includes(lang)) language=lang; }
@@ -129,7 +150,7 @@ if (payload.admin) {
 $('copies').textContent=num(rows.reduce((s,r)=>s+Number(r.Quantity),0));$('unique').textContent=num(new Set(rows.map(r=>r['Card Name'])).size);$('entries').textContent=num(rows.length);$('folderCount').textContent=folders.length;}
 $('allCount').textContent=payload.admin?num(rows.length):'';
 $('sidebarFolderCount').textContent=folders.length;
-$('priceNote').textContent=payload.admin?'Offers average LOW and MARKET from the uploaded CSV.':(language==='es'?'Precios por copia.':'Prices shown are per copy.');
+$('priceNote').textContent=payload.admin?'Offers use CSV LOW / MARKET, the minimum USD price and the configured conversion rate.':(language==='es'?'Precios por copia.':'Prices shown are per copy.');
 document.querySelector('#sort option[value="value"]').disabled=!rows.some(r=>r.public_price!==null);
 fillOptions('set',[...new Set(rows.map(setName).filter(Boolean))].sort().map(name=>[name,name]),'All sets');
 $('folders').innerHTML=folders.map((f,i)=>`<button class="folder" data-folder="${i}">▱ <span>${esc(f)}</span><b>${rows.filter(r=>r['Folder Name']===f).length}</b></button>`).join('');
@@ -137,19 +158,25 @@ $('folders').onclick=e=>{const b=e.target.closest('button');if(b)selectFolder(fo
 fillOptions('rarity',[...new Set(rows.map(r=>r.Rarity).filter(Boolean))].map(code=>[code,rarityLabel(code)]).sort((a,b)=>a[1].localeCompare(b[1],language)),'All rarities');
 fillOptions('cardLanguage',[...new Set(rows.map(r=>r.Language).filter(Boolean))].sort().map(value=>[value,t(value)]),'All languages');
 $('cardLanguage').setAttribute?.('aria-label',language==='es'?'Idioma de la carta':'Card language');
+refreshSubtypes();
 restoreSearch();
+refreshSubtypes();
+$('setSearch').placeholder=language==='es'?'Buscar set…':'Search sets…';
+applyTheme();
 if(folder&&!folders.includes(folder))folder='';selectFolder(folder);
 }
 function selectFolder(f){folder=payload.admin?f:'';f=folder;document.querySelectorAll('.folder').forEach(b=>b.classList.toggle('active',b.id==='all'?!f:folders[+b.dataset.folder]===f));$('title').textContent=f||t('All cards');$('breadcrumb').textContent=(f||t('All cards')).toUpperCase();update()}
 
-['search','type','set','rarity','cardLanguage','sort'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',update));
-$('reset').onclick=()=>{['search','type','set','rarity','cardLanguage'].forEach(id=>$(id).value='');$('sort').value='name';selectFolder('')};
+['search','setSearch','type','subtype','set','rarity','cardLanguage','sort'].forEach(id=>$(id).addEventListener(['search','setSearch'].includes(id)?'input':'change',update));
+$('reset').onclick=()=>{['search','setSearch','type','subtype','set','rarity','cardLanguage'].forEach(id=>$(id).value='');$('sort').value='name';refreshSubtypes();selectFolder('')};
 function update() {
     page = 1;
     const query = normalize($('search').value);
     const items = rows.filter(r =>
         (!folder || r['Folder Name'] === folder) &&
         (!$('set').value || setName(r) === $('set').value) &&
+        [setName(r),r['Set Code']].some(value=>normalize(value).includes(normalize($('setSearch').value))) &&
+        (!$('subtype').value || cardSubtypes(r).includes($('subtype').value)) &&
         (!$('cardLanguage').value || r.Language === $('cardLanguage').value) &&
         (!$('rarity').value || r.Rarity === $('rarity').value) &&
         (!$('type').value || (r.info.type || '').includes($('type').value)) &&
@@ -174,9 +201,9 @@ function restoreSearch() {
     if (adminRoute || restoredSearch) return;
     restoredSearch = true;
     const params = new URLSearchParams(location.search || '');
-    for (const [id, key] of [['search','q'],['set','set'],['rarity','rarity'],['cardLanguage','cardLanguage'],['type','type'],['sort','sort']]) {
+    for (const [id, key] of [['search','q'],['setSearch','setq'],['subtype','subtype'],['set','set'],['rarity','rarity'],['cardLanguage','cardLanguage'],['type','type'],['sort','sort']]) {
         const value = params.get(key);
-        if (value !== null && (id === 'search' || [...$(id).options].some(o => o.value === value && !o.disabled))) $(id).value = value;
+        if (value !== null && (['search','setSearch','subtype'].includes(id) || [...$(id).options].some(o => o.value === value && !o.disabled))) $(id).value = value;
     }
     showImages = params.get('images') === '1';
     if (['en','es'].includes(params.get('lang'))) language = params.get('lang');
@@ -184,7 +211,7 @@ function restoreSearch() {
 function searchURL() {
     const url = new URL(location.href);
     url.search = ''; url.hash = '';
-    for (const [id,key] of [['search','q'],['set','set'],['rarity','rarity'],['cardLanguage','cardLanguage'],['type','type'],['sort','sort']]) {
+    for (const [id,key] of [['search','q'],['setSearch','setq'],['subtype','subtype'],['set','set'],['rarity','rarity'],['cardLanguage','cardLanguage'],['type','type'],['sort','sort']]) {
         const value = $(id).value;
         if (value && !(id === 'sort' && value === 'name')) url.searchParams.set(key,value);
     }
@@ -275,7 +302,7 @@ function render() {
     $('empty').hidden = !!filtered.length;
     $('grid').innerHTML = filtered.slice((page-1)*pageSize,page*pageSize).map(r => {
         const name = esc(cardName(r));
-        const badge = payload.admin ? `<span class="quantity">×${esc(r.Quantity)}</span>` : '';
+        const badge = showImages ? `<span class="quantity" aria-label="${t('Copies')}">×${num(payload.admin ? r.Quantity : r.copies)}</span>` : '';
         const location = payload.admin ? `<div class="card-folder">▱ ${esc(r['Folder Name'])}</div>` : '';
         const rarities = (r.rarities || [r.Rarity]).map(rarityLabel).join(' · ');
         return `<div class="card-entry"><button class="card" data-id="${r._id}" aria-label="${t('View')} ${name}, ${esc(r['Card Number'])}">${showImages ? `<div class="art">${image(r)}${badge}</div>` : badge}<h3 title="${name}">${name}</h3><div class="card-meta"><span>${esc(r['Card Number'])}</span><span class="rarity">${esc(rarities)}</span></div>${location}${!showImages ? `<span class="copy-count">${t('Copies')}: ${num(payload.admin ? r.Quantity : r.copies)}</span>` : ''}<div class="offer">${esc(offer(r))}</div></button>${!payload.admin ? `<button type="button" class="want-add" data-add-want="${r._id}" aria-pressed="${wants.some(x=>x.key===groupKey(r))}">${wants.some(x=>x.key===groupKey(r)) ? (language==='es'?'✓ En la lista':'✓ In want list') : (language==='es'?'+ Lista de deseos':'+ Want list')}</button>` : ''}</div>`;
@@ -316,8 +343,8 @@ function visitorDetails(r) {
         <h3>${t('Available versions')}</h3>${details}
         </div></div>`;
 }
-function openCard(id){const r=rows.find(x=>x._id===id);if(!r)return;if(!payload.admin){lastFocus=document.activeElement;$('detailContent').innerHTML=visitorDetails(r);fallbackImages();if(!$('detail').open)$('detail').showModal();$('detail').scrollTop=0;return;}const c=r.info;lastFocus=document.activeElement;const attrs=['attribute','race','level','linkval','atk','def'].filter(k=>c[k]!=null).map(k=>`<span>${({level:'LEVEL ',linkval:'LINK ',atk:'ATK ',def:'DEF '})[k]||''}${esc(c[k])}</span>`).join('');const fields=[...(payload.admin?[['Folder',r['Folder Name']]]:[]),['Set',r['Set Name']],['Card number',r['Card Number']],['Rarity',rarityLabel(r.Rarity)],['Condition',r.Condition],['Printing',r.Printing],['Language',r.Language],['Owned / Trade',`${r.Quantity} / ${r['Trade Quantity']}`],['Offer price · per copy',r.public_price===null?'Ask for price':price(r.public_price)+' '+payload.currency],...(payload.admin? [['Date bought',r['Date Bought']||'Not recorded'],['Bought · per copy',price(r['Price Bought'])],['CSV low / mid',`${price(r.LOW)} / ${price(r.MID)}`],['CSV market · per copy',price(r.MARKET)]]:[])];const other=rows.filter(x=>x['Card Name']===r['Card Name']&&x._id!==id);
-$('detailContent').innerHTML=`<div class="detail-layout"><div>${image(r,'detail-img')}<p class="detail-note">Representative artwork. Your edition and condition are listed alongside.</p></div><div><div class="type-tag">${esc(c.type||'CARD DETAILS')}</div><h2>${esc(r['Card Name'])}</h2><div class="attributes">${attrs}</div><p class="effect">${esc(c.desc||'Effect text is unavailable for this card. Your collection details are shown below.')}</p><dl>${fields.map(([k,v])=>`<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>${referenceSection(r)}<p class="detail-note">${payload.admin?'Offer prices average LOW and MARKET from the uploaded CSV.':'Price shown is the offered price per copy.'}</p>${other.length?`<h3>Other entries in your collection (${other.length})</h3>${other.map(x=>`<button class="other" data-other="${x._id}">${esc(x['Card Number'])}${payload.admin?' · '+esc(x['Folder Name']):''} · ×${x.Quantity}</button>`).join('')}`:''}</div></div>`;fallbackImages();if(!$('detail').open)$('detail').showModal();$('detail').scrollTop=0;}
+function openCard(id){const r=rows.find(x=>x._id===id);if(!r)return;if(!payload.admin){lastFocus=document.activeElement;$('detailContent').innerHTML=visitorDetails(r);fallbackImages();if(!$('detail').open)$('detail').showModal();$('detail').scrollTop=0;return;}const c=r.info;lastFocus=document.activeElement;const attrs=['attribute','race','level','linkval','atk','def'].filter(k=>c[k]!=null).map(k=>`<span>${({level:'LEVEL ',linkval:'LINK ',atk:'ATK ',def:'DEF '})[k]||''}${esc(c[k])}</span>`).join('');const fields=[...(payload.admin?[['Folder',r['Folder Name']]]:[]),['Set',r['Set Name']],['Card number',r['Card Number']],['Rarity',rarityLabel(r.Rarity)],['Condition',r.Condition],['Printing',r.Printing],['Language',r.Language],['Owned / Trade',`${r.Quantity} / ${r['Trade Quantity']}`],['Offer price · per copy',r.public_price===null?'Ask for price':offer(r)],...(payload.admin? [['Date bought',r['Date Bought']||'Not recorded'],['Bought · per copy',price(r['Price Bought'])],['CSV low / mid',`${price(r.LOW)} / ${price(r.MID)}`],['CSV market · per copy',price(r.MARKET)]]:[])];const other=rows.filter(x=>x['Card Name']===r['Card Name']&&x._id!==id);
+$('detailContent').innerHTML=`<div class="detail-layout"><div>${image(r,'detail-img')}<p class="detail-note">Representative artwork. Your edition and condition are listed alongside.</p></div><div><div class="type-tag">${esc(c.type||'CARD DETAILS')}</div><h2>${esc(r['Card Name'])}</h2><div class="attributes">${attrs}</div><p class="effect">${esc(c.desc||'Effect text is unavailable for this card. Your collection details are shown below.')}</p><dl>${fields.map(([k,v])=>`<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>${referenceSection(r)}<p class="detail-note">${payload.admin?'Offers use CSV LOW / MARKET, the minimum USD price and the configured conversion rate.':'Price shown is the offered price per copy.'}</p>${other.length?`<h3>Other entries in your collection (${other.length})</h3>${other.map(x=>`<button class="other" data-other="${x._id}">${esc(x['Card Number'])}${payload.admin?' · '+esc(x['Folder Name']):''} · ×${x.Quantity}</button>`).join('')}`:''}</div></div>`;fallbackImages();if(!$('detail').open)$('detail').showModal();$('detail').scrollTop=0;}
 $('detailContent').onclick=e=>{const b=e.target.closest('[data-other]');if(b)openCard(+b.dataset.other)};$('close').onclick=()=>$('detail').close();$('detail').addEventListener('close',()=>lastFocus?.focus());$('detail').onclick=e=>{if(e.target===$('detail')){const r=$('detail').getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)$('detail').close()}};
 
 $('loginForm').onsubmit=async e=>{e.preventDefault();try{await request('/api/login',{password:$('password').value});$('password').value='';$('message').hidden=true;await load()}catch(e){notify(e.message,true)}};
@@ -344,11 +371,10 @@ async function processHostedArtwork() {
 
 function renderAdmin(){
  const settings=payload.settings;
- $('viewLink').textContent='OPEN USER VIEW →';$('viewLink').href='/';$('viewLink').target='_blank';
  $('adminPanel').hidden=false;
- $('adminPanel').innerHTML=`<div class="admin-heading"><div><div class="eyebrow">ADMIN WORKSPACE</div><h2>Manage your collection</h2></div><button id="logout">Sign out</button></div><div class="admin-columns"><section><h3>Visitor access & pricing</h3><p>Cards from checked folders appear in the user view; folder names remain private. New folders start private.</p><form id="settingsForm"><div class="price-settings"><label>Currency label<input id="currency" maxlength="12" value="${esc(settings.currency)}" placeholder="e.g. USD"></label></div><p class="detail-note">Offer prices average LOW and MARKET from the uploaded CSV. Entries missing either value show “Ask for price”.</p><div class="visibility-list">${Object.entries(payload.folders).sort(([a],[b])=>a.localeCompare(b)).map(([f,n])=>`<label><input type="checkbox" name="visibleFolder" value="${esc(f)}" ${settings.visible_folders.includes(f)?'checked':''}><span>${esc(f)}</span><small>${n} entries</small></label>`).join('')}</div><button type="submit">Save visibility & pricing</button></form></section><section><h3>Update collection</h3><p>Upload a full collection export. This replaces all entries; it does not append them. Existing folder visibility and pricing settings are preserved.</p><label class="upload-box">Choose collection CSV<input type="file" id="csvUpload" accept=".csv,text/csv"></label><div id="importPreview" hidden></div><h3 class="cache-heading">Card data, prices & artwork</h3><p id="cacheStatus"></p><p class="detail-note" id="cacheExtra"></p><button id="refreshCache">Refresh prices, metadata & missing images</button><p class="detail-note">${payload.hosted ? 'After an upload, artwork is prepared automatically while this admin tab stays open. If you close it, use Refresh to resume.' : 'Already cached artwork is reused. New names and missing artwork are fetched in the background after imports. YGOPRODeck metadata and reference prices refresh when older than 48 hours on startup/import, or with this button.'} Admin card details show CSV prices and YGOPRODeck reference prices.</p></section></div>`;
+ $('adminPanel').innerHTML=`<div class="admin-heading"><div><div class="eyebrow">ADMIN WORKSPACE</div><h2>Manage your collection</h2></div><button id="logout">Sign out</button></div><div class="admin-columns"><section><h3>Visitor access & pricing</h3><p>Cards from checked folders appear in the user view; folder names remain private. New folders start private.</p><form id="settingsForm"><div class="price-settings"><label>Display currency<select id="currency"><option value="USD" ${settings.currency!=='CLP'?'selected':''}>USD</option><option value="CLP" ${settings.currency==='CLP'?'selected':''}>CLP</option></select></label><label>Minimum per copy (USD)<input id="minPriceUsd" type="number" min="0" max="1000000000" step="0.01" value="${esc(settings.min_price_usd??0)}"></label><label>CLP per 1 USD<input id="usdToClp" type="number" min="0.01" max="1000000000" step="0.01" value="${esc(settings.usd_to_clp??'')}" placeholder="Enter conversion rate"></label></div><p class="detail-note">Offer USD = max((LOW + MARKET) / 2, minimum USD). CLP = offer USD × your conversion rate, rounded to the nearest peso. Entries missing either CSV value show “Ask for price”.</p><div class="visibility-list">${Object.entries(payload.folders).sort(([a],[b])=>a.localeCompare(b)).map(([f,n])=>`<label><input type="checkbox" name="visibleFolder" value="${esc(f)}" ${settings.visible_folders.includes(f)?'checked':''}><span>${esc(f)}</span><small>${n} entries</small></label>`).join('')}</div><button type="submit">Save visibility & pricing</button></form></section><section><h3>Update collection</h3><p>Upload a full collection export. This replaces all entries; it does not append them. Existing folder visibility and pricing settings are preserved.</p><label class="upload-box">Choose collection CSV<input type="file" id="csvUpload" accept=".csv,text/csv"></label><div id="importPreview" hidden></div><h3 class="cache-heading">Card data, prices & artwork</h3><p id="cacheStatus"></p><p class="detail-note" id="cacheExtra"></p><button id="refreshCache">Refresh prices, metadata & missing images</button><p class="detail-note">${payload.hosted ? 'After an upload, artwork is prepared automatically while this admin tab stays open. If you close it, use Refresh to resume.' : 'Already cached artwork is reused. New names and missing artwork are fetched in the background after imports. YGOPRODeck metadata and reference prices refresh when older than 48 hours on startup/import, or with this button.'} Admin card details show CSV prices and YGOPRODeck reference prices.</p></section></div>`;
  showCache(payload.cache);
- $('settingsForm').onsubmit=async e=>{e.preventDefault();try{await request('/api/admin/settings',{markup:null,currency:$('currency').value,visible_folders:[...document.querySelectorAll('[name=visibleFolder]:checked')].map(x=>x.value)});notify('Visitor access and offer pricing saved.');await load()}catch(e){notify(e.message,true)}};
+ $('settingsForm').onsubmit=async e=>{e.preventDefault();try{await request('/api/admin/settings',{markup:null,currency:$('currency').value,min_price_usd:$('minPriceUsd').value,usd_to_clp:$('usdToClp').value,visible_folders:[...document.querySelectorAll('[name=visibleFolder]:checked')].map(x=>x.value)});notify('Visitor access and offer pricing saved.');await load()}catch(e){notify(e.message,true)}};
  $('logout').onclick=async()=>{try{await request('/api/logout',{});location.href='/admin'}catch(e){notify(e.message,true)}};
  $('csvUpload').onchange=async()=>{const file=$('csvUpload').files[0];if(!file)return;try{if(file.size>11*1024*1024)throw new Error('CSV must be smaller than 11 MB.');const body={csv:await file.text()};if(payload.hosted&&new TextEncoder().encode(JSON.stringify(body)).length>4_000_000)throw new Error('Hosted CSV uploads must fit within 4 MB.');const preview=await request('/api/admin/preview',body);$('importPreview').hidden=false;$('importPreview').innerHTML=`<h4>Review replacement</h4><p>${num(preview.entries)} entries · ${num(preview.copies)} copies</p><p>${preview.added_entries} added or changed entries · ${preview.removed_entries} removed or changed entries</p><p>New private folders: ${esc(preview.new_folders.join(', ')||'None')}</p><button id="confirmImport">Replace collection with this CSV</button><button id="cancelImport" type="button">Cancel</button>`;$('confirmImport').onclick=async()=>{try{$('confirmImport').disabled=true;const result=await request('/api/admin/import',{token:preview.token});notify(result.message);await load();if(payload.hosted)await processHostedArtwork()}catch(e){notify(e.message,true);$('confirmImport').disabled=false}};$('cancelImport').onclick=()=>{$('importPreview').hidden=true;$('csvUpload').value=''}}catch(e){$('importPreview').hidden=true;$('csvUpload').value='';notify(e.message,true)}};
  $('refreshCache').onclick=async()=>{try{

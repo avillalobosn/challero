@@ -85,7 +85,12 @@ def public_price(row, settings):
         market = Decimal(row.get('MARKET') or '')
         if any(not value.is_finite() or not 0 <= value <= Decimal('1e12') for value in (low, market)):
             return None
-        return str(((low + market) / 2).quantize(Decimal('.01'), rounding=ROUND_HALF_UP))
+        amount = max((low + market) / 2, Decimal(str(settings.get('min_price_usd') or 0)))
+        if settings.get('currency') == 'CLP':
+            rate = Decimal(str(settings.get('usd_to_clp') or 0))
+            if not rate.is_finite() or rate <= 0: return None
+            amount *= rate
+        return str(amount.quantize(Decimal('1') if settings.get('currency') == 'CLP' else Decimal('.01'), rounding=ROUND_HALF_UP))
     except (InvalidOperation, TypeError, ValueError):
         return None
 
@@ -437,11 +442,21 @@ class ArchiveRoutes:
                 markup=body.get('markup');currency=body.get('currency','')
                 if markup is not None and (isinstance(markup,bool) or not isinstance(markup,(int,float)) or not math.isfinite(markup) or not 0<=markup<=10000): raise ValueError('Markup must be between 0 and 10,000 percent.')
                 if not isinstance(currency,str) or len(currency.strip())>12: raise ValueError('Currency label must be 12 characters or fewer.')
+                pricing = {}
+                for key in ('min_price_usd', 'usd_to_clp'):
+                    value = body.get(key)
+                    if value is None or value == '': pricing[key] = None; continue
+                    if isinstance(value, bool): raise ValueError('Invalid pricing setting.')
+                    try: amount = Decimal(str(value))
+                    except InvalidOperation: raise ValueError('Invalid pricing setting.')
+                    if not amount.is_finite() or amount < 0 or amount > Decimal('1e9') or (key == 'usd_to_clp' and amount == 0): raise ValueError('Minimum price must be nonnegative and conversion rate must be positive.')
+                    pricing[key] = str(amount)
+                if currency.strip() == 'CLP' and not pricing['usd_to_clp']: raise ValueError('Set a USD to CLP conversion rate first.')
                 visible=body.get('visible_folders')
                 with LOCK:
                     state=read('collection.json'); folders={r['Folder Name'] for r in state['rows']}
                     if not isinstance(visible,list) or any(not isinstance(x,str) or x not in folders for x in visible): raise ValueError('Invalid folder selection. Reload admin and retry.')
-                    state['settings']={'visible_folders':list(dict.fromkeys(visible)),'markup':markup,'currency':currency.strip()};state['revision']+=1;save('collection.json',state)
+                    state['settings']={'visible_folders':list(dict.fromkeys(visible)),'markup':markup,'currency':currency.strip(),**pricing};state['revision']+=1;save('collection.json',state)
                 return self.send(200,{'ok':True})
             if path=='/api/admin/preview':
                 rows=parse_csv(body.get('csv',''))

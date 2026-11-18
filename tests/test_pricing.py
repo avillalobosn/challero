@@ -28,4 +28,15 @@ class PricingTests(unittest.TestCase):
         self.assertIsNone(app.public_price(dict(self.row, LOW='5.00'),{'currency':'USD'}))
         self.assertEqual(app.public_price(dict(self.row, LOW='1.00', MARKET='1.01'),{'currency':'USD'}),'1.01')
 
+    def test_minimum_and_manual_clp_conversion(self):
+        row = dict(self.row, LOW='0.10', MARKET='0.20')
+        settings = {'currency':'USD','min_price_usd':'0.50','usd_to_clp':'950'}
+        self.assertEqual(app.public_price(row, settings), '0.50')
+        settings['currency'] = 'CLP'
+        self.assertEqual(app.public_price(row, settings), '475')
+        self.assertEqual(app.public_price(dict(row, LOW='1.00', MARKET='1.01'), settings), '955')
+        self.assertIsNone(app.public_price(dict(row, MARKET=''), settings))
+        for rate in [None, '0', '-1', 'NaN', 'Infinity']:
+            self.assertIsNone(app.public_price(row, dict(settings, usd_to_clp=rate)))
+
 if __name__=='__main__': unittest.main()

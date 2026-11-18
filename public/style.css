@@ -28,3 +28,20 @@
 .card-entry{min-width:0;display:flex;flex-direction:column;gap:6px}.card-entry>.card{width:100%;height:100%}.text-view .card-entry{display:flex;flex-direction:row;align-items:stretch}.text-view .card-entry>.card{flex:1;min-width:0}.want-add{font-size:12px;padding:8px;color:var(--green);background:var(--panel);border:1px solid var(--line);border-radius:5px}#wantPanel{border:1px solid var(--line);padding:16px;margin:12px 0 20px;border-radius:6px}.want-item{display:flex;gap:12px;align-items:center;margin:10px 0}.want-item>span{flex:1}.want-item input{width:65px;background:var(--panel);color:var(--white);padding:6px;border:1px solid var(--line)}#copyFallback{display:block;width:100%;min-height:100px;margin:12px 0}#copyFallback[hidden]{display:none}@media(max-width:650px){.text-view .card-entry{flex-direction:column}.want-item{flex-wrap:wrap}.want-item>span{flex-basis:100%}}
 
 #wantVersionDialog{max-width:min(600px,95vw)}#wantVersion{display:block;width:100%;margin:16px 0;white-space:normal}
+
+/* Both themes share the same layout and persisted user preference. */
+#theme{background:var(--panel);color:var(--white);border:1px solid var(--line);border-radius:5px;padding:7px 10px;font-size:11px}
+.set-search{background:var(--panel);color:var(--white);border:1px solid var(--line);border-radius:5px;padding:10px;min-width:120px;width:145px}
+.price-settings{display:flex;gap:14px;flex-wrap:wrap}.price-settings label{flex:1;min-width:140px}.price-settings select{padding:12px;max-width:none;width:100%}
+:root[data-theme="light"]{color-scheme:light;--bg:#f5f7f2;--panel:#fff;--line:#cbd5c8;--muted:#526252;--green:#35611d;--white:#202b21}
+[data-theme="light"] aside,[data-theme="light"] .stats,[data-theme="light"] .admin-columns>section,[data-theme="light"] dialog{background:#fff}
+[data-theme="light"] .search,[data-theme="light"] select,[data-theme="light"] .toolbar button,[data-theme="light"] .pagination button,[data-theme="light"] .attributes span,[data-theme="light"] .other,[data-theme="light"] #login input,[data-theme="light"] .price-settings input{background:#edf2e9;color:var(--white);border-color:var(--line)}
+[data-theme="light"] .folder,[data-theme="light"] footer,[data-theme="light"] header b,[data-theme="light"] .effect,[data-theme="light"] #login label,[data-theme="light"] .price-settings label{color:var(--white)}
+[data-theme="light"] .folder:hover,[data-theme="light"] .folder.active{background:#e3ecd9;color:var(--green)}
+[data-theme="light"] .credits,[data-theme="light"] .card-folder{color:var(--muted)}
+[data-theme="light"] #message,[data-theme="light"] #importPreview{background:#e7efdf;color:var(--white)}
+[data-theme="light"] #message.error{background:#fff0e9;color:#882b18}
+[data-theme="light"] #login button,[data-theme="light"] #adminPanel button{background:#e2edda;color:#294f17}
+[data-theme="light"] .art{background:linear-gradient(135deg,#d9e2d3,#b8c6b0)}
+
+.toolbar{flex-wrap:wrap;align-items:stretch}.toolbar>.search{flex-basis:240px}.toolbar>select,.toolbar>button{min-height:43px}

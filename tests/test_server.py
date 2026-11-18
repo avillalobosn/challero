@@ -141,6 +141,23 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(self.call('/api/collection')[1]['rows'],[])
         self.assertEqual(self.call('/assets/1.jpg',authenticated=False)[0],404)
         self.assertEqual(app.public_price(self.rows[0],{'markup':None,'currency':'USD'}),'8.67')
+    def test_pricing_settings_validation_and_public_conversion(self):
+        self.login()
+        settings = {'currency':'CLP','visible_folders':['Public binder'],'min_price_usd':'10','usd_to_clp':'950'}
+        self.assertEqual(self.call('/api/admin/settings',settings)[0],200)
+        public = self.call('/api/collection')[1]
+        self.assertEqual(public['currency'],'CLP')
+        self.assertEqual(public['rows'][0]['public_price'],'9500')
+        self.assertNotIn('usd_to_clp',json.dumps(public))
+        before = app.read('collection.json')
+        for key, value in [('usd_to_clp',None),('usd_to_clp','0'),('usd_to_clp','-2'),('usd_to_clp','NaN'),('min_price_usd','-1'),('min_price_usd',True),('min_price_usd','Infinity')]:
+            self.assertEqual(self.call('/api/admin/settings',dict(settings,**{key:value}))[0],400,(key,value))
+            self.assertEqual(app.read('collection.json'),before)
+        with patch.object(app,'queue_refresh'):
+            preview=self.call('/api/admin/preview',{'csv':self.csv(self.rows)})[1]
+            self.assertEqual(self.call('/api/admin/import',{'token':preview['token']})[0],200)
+        self.assertEqual(app.read('collection.json')['settings'],before['settings'])
+
     def test_csv_preview_replace_preserves_settings_and_backup(self):
         self.login();new=self.rows+[dict(self.rows[0],**{'Folder Name':'New private folder','Card Name':'New card'})]
         status,preview,_=self.call('/api/admin/preview',{'csv':self.csv(new)});self.assertEqual(status,200);self.assertEqual(preview['new_folders'],['New private folder'])
