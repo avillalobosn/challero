@@ -115,6 +115,43 @@ class LambdaTests(unittest.TestCase):
         states = [json.loads(c.kwargs['Body']) for c in s3.put_object.call_args_list if c.kwargs['Key'] == worker.STATE_KEY]
         self.assertEqual(states, [{'paused': True}])
 
+    def test_inspection_works_while_paused_without_oauth_or_import(self):
+        import io
+        secrets, s3, http = Mock(), Mock(), Mock()
+        secrets.get_secret_value.return_value = {'SecretString': json.dumps({
+            'duel_site_url': 'https://example.com', 'duel_import_token': 'x' * 43})}
+        s3.get_object.side_effect = [
+            {'Body': io.BytesIO(b'{"paused":true}')}, {'Body': io.BytesIO(sample())}]
+        s3.list_objects_v2.return_value = {'Contents': [{'Key': 'sync/exports/latest.csv'}]}
+        http.json.return_value = {'added_entries': 100, 'removed_entries': 100,
+                                 'added_copies': 1, 'removed_copies': 1, 'removed_folders': [], 'token': 'private-preview-token'}
+        env = {'SYNC_SECRET_ARN': 'secret', 'SYNC_BACKUP_BUCKET': 'bucket', 'SYNC_MIN_ENTRIES': '1',
+               'SYNC_MIN_COPIES': '1', 'SYNC_MIN_FOLDERS': '1', 'SYNC_IMPORT_ENABLED': 'false'}
+        with patch.dict(os.environ, env), patch.object(worker.boto3, 'client', side_effect=[secrets, s3]), \
+                patch.object(worker.sync, 'download') as download, patch.object(worker.sync, 'HTTP', return_value=http):
+            result = worker.handler({'mode': 'inspect'}, None)
+        self.assertTrue(result['paused'])
+        self.assertFalse(result['import_would_pass_guards'])
+        self.assertFalse(result['guards']['physical_removals'])
+        self.assertEqual(result['removed_copies'], 1)
+        download.assert_not_called()
+        secrets.put_secret_value.assert_not_called()
+        s3.put_object.assert_not_called()
+        self.assertEqual(http.json.call_count, 1)
+        self.assertTrue(http.json.call_args.args[0].endswith('/preview'))
+        self.assertNotIn('private-preview-token', json.dumps(result))
+
+    def test_safe_error_reports_aws_code_without_request_details(self):
+        import io
+        from botocore.exceptions import ClientError
+        error = ClientError({'Error': {'Code': 'AccessDenied', 'Message': 'sensitive-token'}}, 'GetObject')
+        with patch.object(worker, 'run', side_effect=error), patch('sys.stdout', new_callable=io.StringIO) as output:
+            with self.assertRaises(RuntimeError) as caught:
+                worker.handler({}, None)
+        self.assertIn('AccessDenied', str(caught.exception))
+        self.assertNotIn('sensitive-token', str(caught.exception))
+        self.assertNotIn('sensitive-token', output.getvalue())
+
 
 class LockTests(unittest.TestCase):
     def conflict(self):

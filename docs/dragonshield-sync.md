@@ -127,3 +127,16 @@ is a separate Scheduler invoke role, hourly schedule, and SNS
 email alerts via CloudWatch alarms for Lambda errors and Scheduler delivery
 failures. Confirm the SNS email subscription before relying on it. Keep Scheduler
 retry attempts at zero and the schedule disabled until manual checks pass.
+
+
+### Inspect a failed run safely
+
+Upload the current ZIP and run `{"mode":"inspect"}`. Inspection works while
+paused. It takes the same S3 lock, reads state and the newest saved CSV, and
+requests only a site preview. It does not renew Dragon Shield authentication,
+write sync state, clear the pause, or call the import endpoint. It reports
+counts and which guards pass. The preview token and credentials are omitted.
+Failure responses now report a safe stage and category (for example,
+`inventory-guard / inventory-removal-blocked`, or `acquire-lock / AccessDenied`)
+without raw exception messages, request bodies, or signed URLs. For an uncertain
+import, compare the saved export with the current site before resuming.

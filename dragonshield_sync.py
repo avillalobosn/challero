@@ -21,6 +21,12 @@ EXPORT_URL = 'https://api-yugioh.dragonshield.com/api/v1/folders/export'
 class SyncError(Exception):
     pass
 
+class SyncHTTPError(SyncError):
+    def __init__(self, status):
+        self.status = int(status)
+        super().__init__('Remote HTTP request failed.')
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
@@ -45,7 +51,7 @@ class HTTP:
                     raise SyncError('Response exceeds 12 MB.')
                 return body
         except urllib.error.HTTPError as exc:
-            raise SyncError(f'HTTP {exc.code} from {urllib.parse.urlsplit(url).hostname}; credentials or session may need renewal.') from None
+            raise SyncHTTPError(exc.code) from None
         except (urllib.error.URLError, TimeoutError):
             raise SyncError('Network request failed; no import was committed by this request.') from None
 
