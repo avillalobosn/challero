@@ -205,6 +205,20 @@ def summarize(old, new):
     a,b = identities(old),identities(new)
     return {'entries':len(new),'copies':sum(int(r['Quantity']) for r in new), 'added_entries':sum((b-a).values()),'removed_entries':sum((a-b).values()),'new_folders':sorted({r['Folder Name'] for r in new}-{r['Folder Name'] for r in old})}
 
+def inventory_changes(old, new):
+    """Count lost physical copies without treating price snapshots as removals."""
+    identity_fields = [k for k in HEADERS if k not in
+                       ('Quantity', 'Trade Quantity', 'Price Bought', 'Date Bought', 'LOW', 'MID', 'MARKET')]
+    def inventory(rows):
+        result = Counter()
+        for row in rows:
+            result[tuple(row[k] for k in identity_fields)] += int(row['Quantity'])
+        return result
+    before, after = inventory(old), inventory(new)
+    return {'removed_copies': sum((before - after).values()),
+            'added_copies': sum((after - before).values()),
+            'removed_folders': sorted({r['Folder Name'] for r in old} - {r['Folder Name'] for r in new})}
+
 def queue_refresh(force=False):
     global CACHE_RUNNING
     if HOSTED_STORE.get():
@@ -475,6 +489,8 @@ class ArchiveRoutes:
                 rows=parse_csv(body.get('csv',''))
                 with LOCK:
                     state=read('collection.json'); summary=summarize(state['rows'],rows)
+                    if sync_identity:
+                        summary.update(inventory_changes(state['rows'], rows))
                     key = secrets.token_urlsafe(24)
                     staged = (token, time.time() + 600, state['revision'], rows)
                     if store:

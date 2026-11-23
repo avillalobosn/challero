@@ -65,9 +65,18 @@ Dedicated import authentication:
 - Rotate by generating a new random token, changing the server hash and secret
   token together. Revocation is immediate on deployment of the new hash.
 
-Before running the full ZIP, set Lambda reserved concurrency to **1**. This is
-required to serialize OAuth renewal and S3 state updates. Set asynchronous retry
-attempts to **0**. Keep all triggers disabled until verification is complete.
+The full ZIP uses an S3 conditional-write lock at `sync/lock.json` for all modes,
+including download-only and resume. It needs no additional IAM permissions and
+works with unreserved concurrency. A running lease causes another invocation to
+return `skipped-overlap` before reading credentials or touching state. The lease
+expires after 16 minutes, exceeding the standard Lambda maximum 15-minute
+runtime; timed-out owners cannot overlap with lease takeover. Normal completion
+or errors release it conditionally using the owner's ETag. Do not delete or edit
+the lock manually while a worker may be running. Keep this as a standard Lambda
+function with a timeout no greater than 15 minutes.
+
+Set asynchronous retry attempts to **0**. Keep all triggers disabled until
+verification is complete.
 
 The existing IAM policy needs one additional statement so a missing initial
 state object returns 404 rather than AccessDenied:
@@ -85,12 +94,18 @@ Environment variables beyond the existing secret ARN and bucket:
 - `SYNC_MIN_ENTRIES=2000`
 - `SYNC_MIN_COPIES=4000`
 - `SYNC_MIN_FOLDERS=20`
-- `SYNC_MAX_REMOVALS=0` initially
+- `SYNC_MAX_REMOVED_COPIES=0` initially (replaces the obsolete `SYNC_MAX_REMOVALS`)
 - `SYNC_IMPORT_ENABLED=false` initially
 
 Run `{"mode":"preview"}` first. It downloads and backs up the CSV and returns
-added/removed counts without committing. Price changes count as removed old rows
-plus added new rows. Choose a reviewed removal allowance before enabling imports.
+added/removed counts without committing. The response includes `removed_copies` and `removed_folders`, computed by
+comparing quantities for each card/printing/folder while ignoring all price
+fields, purchase date, and trade quantity. Row-level added/removed counts still
+include price changes for compatibility. The worker guards on physical copies,
+not changed rows, and blocks removal of any existing folder. Folder moves and
+printing/condition corrections count as inventory losses from their old identity
+and require review. A legitimate quantity reduction can be allowed through
+`SYNC_MAX_REMOVED_COPIES` after reviewing the preview.
 Set `SYNC_IMPORT_ENABLED=true` only after reviewing the preview. Then manually
 run `{"mode":"sync"}` and verify the website before creating any schedule.
 

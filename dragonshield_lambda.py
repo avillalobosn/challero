@@ -3,6 +3,9 @@ import hashlib
 import json
 import os
 import tempfile
+import time
+import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,11 +15,49 @@ from botocore.exceptions import ClientError
 import dragonshield_sync as sync
 
 STATE_KEY = 'sync/state.json'
+LOCK_KEY = 'sync/lock.json'
+
+
+class LockBusy(Exception):
+    pass
+
+
+@contextmanager
+def exclusive_run(s3, bucket):
+    # 16 minutes exceeds the standard Lambda maximum runtime of 15 minutes.
+    # A timed-out worker cannot still be running when this lease is reclaimed.
+    payload = json.dumps({'owner': uuid.uuid4().hex, 'expires_at': time.time() + 960}).encode()
+    args = dict(Bucket=bucket, Key=LOCK_KEY, Body=payload,
+                ContentType='application/json', ServerSideEncryption='AES256')
+    try:
+        response = s3.put_object(**args, IfNoneMatch='*')
+    except ClientError as exc:
+        if exc.response['Error']['Code'] not in ('PreconditionFailed', '412', 'ConditionalRequestConflict', '409'):
+            raise
+        existing = s3.get_object(Bucket=bucket, Key=LOCK_KEY)
+        if json.loads(existing['Body'].read())['expires_at'] > time.time():
+            raise LockBusy() from None
+        try:
+            response = s3.put_object(**args, IfMatch=existing['ETag'])
+        except ClientError as conflict:
+            if conflict.response['Error']['Code'] in ('PreconditionFailed', '412', 'ConditionalRequestConflict', '409'):
+                raise LockBusy() from None
+            raise
+    try:
+        yield
+    finally:
+        # Releasing is also conditional: never release another owner's lease.
+        s3.put_object(Bucket=bucket, Key=LOCK_KEY, Body=b'{"expires_at":0}',
+                      IfMatch=response['ETag'], ContentType='application/json', ServerSideEncryption='AES256')
 
 
 def handler(event, context):
     try:
+        if context is not None and context.get_remaining_time_in_millis() > 900000:
+            raise ValueError('Worker supports standard Lambda with at most a 15-minute timeout.')
         return run(event)
+    except LockBusy:
+        return {'status': 'skipped-overlap'}
     except Exception:
         raise RuntimeError('Sync failed. Inspect the backup and site before resuming. Credentials and request details are suppressed.') from None
 
@@ -30,8 +71,8 @@ def run(event):
     minimum = int(os.environ.get('SYNC_MIN_ENTRIES', '2000'))
     min_copies = int(os.environ.get('SYNC_MIN_COPIES', '4000'))
     min_folders = int(os.environ.get('SYNC_MIN_FOLDERS', '20'))
-    max_removals = int(os.environ.get('SYNC_MAX_REMOVALS', '0'))
-    if min(minimum, min_copies, min_folders) < 1 or max_removals < 0:
+    max_removed_copies = int(os.environ.get('SYNC_MAX_REMOVED_COPIES', '0'))
+    if min(minimum, min_copies, min_folders) < 1 or max_removed_copies < 0:
         raise ValueError('Invalid completeness guards.')
     if mode == 'sync' and os.environ.get('SYNC_IMPORT_ENABLED') != 'true':
         raise ValueError('Imports are disabled.')
@@ -39,6 +80,13 @@ def run(event):
     secrets = boto3.client('secretsmanager', config=config)
     s3 = boto3.client('s3', config=config)
 
+    with exclusive_run(s3, bucket):
+        return process(mode, secret_arn, bucket, minimum, min_copies, min_folders,
+                       max_removed_copies, secrets, s3)
+
+
+def process(mode, secret_arn, bucket, minimum, min_copies, min_folders,
+            max_removed_copies, secrets, s3):
     def save_state(value):
         s3.put_object(Bucket=bucket, Key=STATE_KEY, Body=json.dumps(value).encode(),
                       ContentType='application/json', ServerSideEncryption='AES256')
@@ -98,11 +146,11 @@ def run(event):
                 raise ValueError('Hosted request exceeds 4 MB.')
             http = sync.HTTP()
             preview = http.json(origin + '/api/sync/preview', headers=headers, payload=payload)
-            result.update(added_entries=preview['added_entries'], removed_entries=preview['removed_entries'])
+            result.update({k: preview[k] for k in ('added_entries', 'removed_entries', 'added_copies', 'removed_copies', 'removed_folders')})
             if mode == 'preview':
                 result['status'] = 'preview-only'
-            elif preview['removed_entries'] > max_removals:
-                raise ValueError('Removal limit exceeded; inspect a preview before changing the limit.')
+            elif preview['removed_copies'] > max_removed_copies or preview['removed_folders']:
+                raise ValueError('Physical copies or folders would be removed; inspect the preview before importing.')
             elif not preview['added_entries'] and not preview['removed_entries']:
                 result['status'] = 'unchanged-collection'
             else:

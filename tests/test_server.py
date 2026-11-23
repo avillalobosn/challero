@@ -56,6 +56,17 @@ class ArchiveTests(unittest.TestCase):
             self.assertEqual(self.call('/api/sync/import', {'token': preview['token']}, headers=headers)[0], 200)
             self.assertEqual(self.call('/api/sync/import', {'token': preview['token']}, headers=headers)[0], 400)
 
+    def test_inventory_guard_ignores_price_updates_and_tracks_quantity_losses(self):
+        changed = [dict(r, MARKET='1.23', LOW='0.50', MID='0.80',
+                        **{'Price Bought': '2.34', 'Date Bought': '2026-11-23', 'Trade Quantity': '0'}) for r in self.rows]
+        self.assertEqual(app.inventory_changes(self.rows, changed),
+                         {'removed_copies': 0, 'added_copies': 0, 'removed_folders': []})
+        changed[0]['Quantity'] = '1'
+        self.assertEqual(app.inventory_changes(self.rows, changed)['removed_copies'], 1)
+        loss = app.inventory_changes(self.rows, changed[:1])
+        self.assertEqual(loss['removed_copies'], 3)
+        self.assertEqual(loss['removed_folders'], ['Secret storage'])
+
     def test_artwork_batch_requires_admin_and_hosted_storage(self):
         self.assertEqual(self.call('/api/admin/artwork-batch',{})[0],401)
         self.login()
