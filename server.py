@@ -401,6 +401,19 @@ class ArchiveRoutes:
             return self.send(400, {'error': 'Invalid request'})
         store = HOSTED_STORE.get()
         secure = '; Secure' if store else ''
+        sync_identity = None
+        if path.startswith('/api/sync/'):
+            if path not in ('/api/sync/preview', '/api/sync/import'):
+                return self.send(404, {'error': 'Not found'})
+            expected = os.environ.get('DUEL_SYNC_TOKEN_SHA256', '')
+            supplied = self.headers.get('Authorization', '')
+            if len(expected) != 64 or not supplied.startswith('Bearer ') or len(supplied) > 1024:
+                return self.send(401, {'error': 'Sync credential required.'})
+            candidate = hashlib.sha256(supplied[7:].encode()).hexdigest()
+            if not hmac.compare_digest(candidate, expected):
+                return self.send(401, {'error': 'Invalid sync credential.'})
+            sync_identity = 'sync:' + candidate
+            path = path.replace('/api/sync/', '/api/admin/', 1)
         if path=='/api/login':
             now = time.time()
             attempts = (store.runtime_get('attempts', client_ip) or []) if store else ATTEMPTS.setdefault(client_ip, [])
@@ -425,7 +438,7 @@ class ArchiveRoutes:
                 SESSIONS[token] = now + 28800
                 attempts.clear()
             return self.send(200, {'ok': True}, cookie=f'duel_admin={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800{secure}')
-        token=self.session()
+        token=sync_identity or self.session()
         if not token: return self.send(401,{'error':'Admin login required.'})
         try:
             if path=='/api/logout':

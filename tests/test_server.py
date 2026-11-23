@@ -40,6 +40,22 @@ class ArchiveTests(unittest.TestCase):
         self.cookie=h['Set-Cookie'].split(';')[0]
     def csv(self,rows):
         f=io.StringIO();writer=csv.DictWriter(f,fieldnames=app.HEADERS);writer.writeheader();writer.writerows(rows);return '\ufeff"sep=,"\n'+f.getvalue()
+    def test_sync_credential_is_scoped_and_preview_owned(self):
+        credential = 'test-sync-credential-' + 'a' * 32
+        digest = hashlib.sha256(credential.encode()).hexdigest()
+        headers = {'Authorization': 'Bearer ' + credential}
+        with patch.dict('os.environ', {'DUEL_SYNC_TOKEN_SHA256': digest}), patch.object(app, 'queue_refresh'):
+            self.assertEqual(self.call('/api/sync/preview', {'csv': self.csv(self.rows)})[0], 401)
+            status, preview, _ = self.call('/api/sync/preview', {'csv': self.csv(self.rows)}, headers=headers)
+            self.assertEqual(status, 200)
+            self.assertEqual(self.call('/api/admin/settings', {}, headers=headers)[0], 401)
+            self.assertEqual(self.call('/api/admin', headers=headers)[0], 401)
+            self.assertEqual(self.call('/api/sync/settings', {}, headers=headers)[0], 404)
+            self.login()
+            self.assertEqual(self.call('/api/admin/import', {'token': preview['token']})[0], 400)
+            self.assertEqual(self.call('/api/sync/import', {'token': preview['token']}, headers=headers)[0], 200)
+            self.assertEqual(self.call('/api/sync/import', {'token': preview['token']}, headers=headers)[0], 400)
+
     def test_artwork_batch_requires_admin_and_hosted_storage(self):
         self.assertEqual(self.call('/api/admin/artwork-batch',{})[0],401)
         self.login()

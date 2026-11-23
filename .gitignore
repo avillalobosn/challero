@@ -22,3 +22,6 @@ htmlcov/
 /duel-static-*/
 *.log
 .DS_Store
+
+# Optional Dragon Shield sign-in environment
+/.venv-sync/
