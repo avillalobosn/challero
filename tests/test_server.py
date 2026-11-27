@@ -40,6 +40,55 @@ class ArchiveTests(unittest.TestCase):
         self.cookie=h['Set-Cookie'].split(';')[0]
     def csv(self,rows):
         f=io.StringIO();writer=csv.DictWriter(f,fieldnames=app.HEADERS);writer.writeheader();writer.writerows(rows);return '\ufeff"sep=,"\n'+f.getvalue()
+    def test_price_visibility_hides_values_from_public_api(self):
+        self.login()
+        status, _, _ = self.call('/api/admin/settings', {'visible_folders':['Public binder'], 'currency':'USD', 'markup':None, 'show_prices':False})
+        self.assertEqual(status, 200)
+        status, public, _ = self.call('/api/collection')
+        self.assertFalse(public['show_prices'])
+        self.assertIsNone(public['rows'][0]['public_price'])
+        self.assertIsNotNone(self.call('/api/admin')[1]['rows'][0]['public_price'])
+        self.assertEqual(self.call('/api/admin/settings', {'visible_folders':['Public binder'], 'currency':'USD', 'show_prices':'false'})[0], 400)
+
+    def test_password_change_requires_current_password_and_revokes_sessions(self):
+        self.login()
+        old_cookie=self.cookie
+        body={'current_password':'wrong','new_password':'replacement-password-123','confirm_password':'replacement-password-123'}
+        self.assertEqual(self.call('/api/admin/password',body)[0],401)
+        body['current_password']='test-password-123'
+        body['confirm_password']='mismatch'
+        self.assertEqual(self.call('/api/admin/password',body)[0],400)
+        body['confirm_password']=body['new_password']
+        self.assertEqual(self.call('/api/admin/password',body)[0],200)
+        self.cookie=old_cookie
+        self.assertEqual(self.call('/api/admin')[0],401)
+        app.ATTEMPTS.clear()
+        self.assertEqual(self.call('/api/login',{'password':'test-password-123'})[0],401)
+        self.assertEqual(self.call('/api/login',{'password':body['new_password']})[0],200)
+
+    def test_password_checks_are_throttled_across_ips(self):
+        for i in range(30):
+            self.assertFalse(app.password_throttled('test-ip-' + str(i)))
+        self.assertTrue(app.password_throttled('different-ip'))
+        app.ATTEMPTS.clear()
+        for _ in range(5): self.assertEqual(self.call('/api/login',{'password':'wrong'})[0],401)
+        with patch.object(app, 'password_matches') as check:
+            self.assertEqual(self.call('/api/login',{'password':'wrong'})[0],429)
+            check.assert_not_called()
+
+    def test_csv_timestamp_only_changes_on_committed_import(self):
+        app.save('csv-import.json',{})
+        self.login()
+        self.assertIsNone(self.call('/api/admin')[1]['csv_updated_at'])
+        preview=self.call('/api/admin/preview',{'csv':self.csv(self.rows)})[1]
+        self.assertIsNone(self.call('/api/admin')[1]['csv_updated_at'])
+        with patch.object(app,'queue_refresh'):
+            self.assertEqual(self.call('/api/admin/import',{'token':preview['token']})[0],200)
+        updated=self.call('/api/admin')[1]['csv_updated_at']
+        self.assertGreater(updated,0)
+        self.call('/api/admin/settings',{'visible_folders':['Public binder'],'currency':'USD'})
+        self.assertEqual(self.call('/api/admin')[1]['csv_updated_at'],updated)
+
     def test_sync_credential_is_scoped_and_preview_owned(self):
         credential = 'test-sync-credential-' + 'a' * 32
         digest = hashlib.sha256(credential.encode()).hexdigest()

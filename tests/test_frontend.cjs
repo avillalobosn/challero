@@ -102,6 +102,18 @@ async function fixture(admin=false,denied=false,search="",storage=new Map()){
  assert.equal(admin.element('refreshCache').disabled,false);
  assert.equal(admin.element('csvUpload').disabled,false);
  assert.equal(admin.intervals.length,0);
+ assert.match(admin.element('adminPanel').innerHTML,/id="showPrices"/);
+ assert.match(admin.element('adminPanel').innerHTML,/id="passwordChangeForm"/);
+ assert.match(admin.element('adminPanel').innerHTML,/Last CSV update: Not recorded yet/);
+ admin.response.csv_updated_at=1700000000;
+ vm.runInContext('renderAdmin()',admin.context);
+ assert.doesNotMatch(admin.element('adminPanel').innerHTML,/Last CSV update: Not recorded yet/);
+ const hiddenPrices=await fixture();
+ hiddenPrices.response.show_prices=false;
+ vm.runInContext('initialize();openCard(7)',hiddenPrices.context);
+ assert.doesNotMatch(hiddenPrices.element('grid').innerHTML,/class="offer"|Ask for price/);
+ assert.doesNotMatch(hiddenPrices.element('detailContent').innerHTML,/Offer price|Ask for price/);
+ assert.equal(hiddenPrices.element('priceNote').hidden,true);
  const denied=await fixture(true,true);assert.equal(denied.element('login').hidden,false);assert.equal(denied.element('collectionView').hidden,true);
  console.log('Frontend checks passed: public/admin initialization, redacted details, stable card IDs, escaped CSV content, empty results, and login gate.');
 })().catch(e=>{console.error(e);process.exitCode=1});

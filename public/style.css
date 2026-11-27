@@ -45,3 +45,9 @@
 [data-theme="light"] .art{background:linear-gradient(135deg,#d9e2d3,#b8c6b0)}
 
 .toolbar{flex-wrap:wrap;align-items:stretch}.toolbar>.search{flex-basis:240px}.toolbar>select,.toolbar>button{min-height:43px}
+
+.price-toggle { display:flex; align-items:center; gap:.65rem; margin-bottom:1rem; }
+.price-toggle input { width:auto; }
+#passwordChangeForm { display:grid; gap:.8rem; margin-top:1rem; }
+#passwordChangeForm label { display:grid; gap:.35rem; }
+#passwordChangeForm button { justify-self:start; }

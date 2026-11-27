@@ -79,6 +79,35 @@ def parse_csv(text):
     if not rows: raise ValueError('The CSV contains no cards. Empty uploads cannot replace your collection.')
     return rows
 
+def password_matches(password, auth):
+    if not isinstance(password, str) or not 1 <= len(password) <= 1024:
+        return False
+    candidate = hashlib.scrypt(password.encode(), salt=bytes.fromhex(auth['salt']), n=16384, r=8, p=1).hex()
+    return hmac.compare_digest(candidate, auth['hash'])
+
+
+def password_throttled(client_ip):
+    """Bound expensive password checks by IP and across the single admin account."""
+    now = time.time()
+    store = HOSTED_STORE.get()
+    with LOCK:
+        if not store:
+            for key in list(ATTEMPTS):
+                ATTEMPTS[key] = [t for t in ATTEMPTS[key] if now - t < 900]
+                if not ATTEMPTS[key]: ATTEMPTS.pop(key, None)
+        buckets = []
+        for key, limit, window in [('ip:' + client_ip, 5, 60), ('account', 30, 900)]:
+            values = (store.runtime_get('attempts', key) or []) if store else ATTEMPTS.get(key, [])
+            values = [t for t in values if now - t < window]
+            if len(values) >= limit: return True
+            buckets.append((key, values, window))
+        for key, values, window in buckets:
+            values.append(now)
+            if store: store.runtime_put('attempts', key, values, now + window)
+            else: ATTEMPTS[key] = values
+    return False
+
+
 def public_price(row, settings):
     try:
         low = Decimal(row.get('LOW') or '')
@@ -187,16 +216,16 @@ def collection_payload(admin=False):
                     info.pop('image', None)
                 else:
                     info['thumbnail'] = str(Path(image).with_suffix('')) + '-thumb-v2.webp'
-            item.update(_id=i, info=info, public_price=public_price(r, state['settings']))
+            item.update(_id=i, info=info, public_price=public_price(r, state['settings']) if admin or state['settings'].get('show_prices', True) else None)
             result.append(item)
-        response = {'rows':result, 'currency':state['settings']['currency'], 'revision':state['revision'], 'sync_token':token if store else sync_token(), 'admin':admin}
+        response = {'rows':result, 'currency':state['settings']['currency'], 'revision':state['revision'], 'sync_token':token if store else sync_token(), 'admin':admin, 'show_prices':state['settings'].get('show_prices', True)}
         if admin:
             if store:
                 requested = read('refresh-request.json', {}).get('requested_at', 0)
                 completed = read('refresh-completed.json', {}).get('requested_at', 0)
                 cache['refresh_pending'] = requested > completed
                 response['hosted'] = True
-            response.update(settings=state['settings'], folders=dict(Counter(r['Folder Name'] for r in state['rows'])), cache={k:v for k,v in cache.items() if k!='cards'})
+            response.update(csv_updated_at=read('csv-import.json', {}).get('updated_at', state.get('csv_updated_at')), settings=state['settings'], folders=dict(Counter(r['Folder Name'] for r in state['rows'])), cache={k:v for k,v in cache.items() if k!='cards'})
         if cache_key is not None: COLLECTION_CACHE.put(cache_key,response)
         return response
 
@@ -328,10 +357,14 @@ class ArchiveRoutes:
         except (KeyError,ValueError,CookieError): return None
         if store := HOSTED_STORE.get():
             key = hashlib.sha256(token.encode()).hexdigest()
-            return key if store.runtime_get('session', key) else None
+            session = store.runtime_get('session', key)
+            version = read('auth.json', {}).get('version', 0)
+            return key if session and (session.get('version', 0) if isinstance(session, dict) else 0) == version else None
         with LOCK:
-            expiry=SESSIONS.get(token,0)
-            if expiry>time.time(): return token
+            value=SESSIONS.get(token,0)
+            expiry=value['expires'] if isinstance(value, dict) else value
+            version=value.get('version', 0) if isinstance(value, dict) else 0
+            if expiry>time.time() and version == read('auth.json', {}).get('version', 0): return token
             SESSIONS.pop(token,None)
         return None
     def get(self, path):
@@ -430,27 +463,19 @@ class ArchiveRoutes:
             path = path.replace('/api/sync/', '/api/admin/', 1)
         if path=='/api/login':
             now = time.time()
-            attempts = (store.runtime_get('attempts', client_ip) or []) if store else ATTEMPTS.setdefault(client_ip, [])
-            attempts[:] = [x for x in attempts if now - x < 60]
-            if len(attempts)>=5: return self.send(429,{'error':'Too many attempts; wait one minute.'})
-            attempts.append(now)
-            if store:
-                store.runtime_put('attempts', client_ip, attempts, now + 60)
+            if password_throttled(client_ip): return self.send(429,{'error':'Too many password attempts. Please try again later.'})
             auth = read('auth.json')
             if not auth:
                 return self.send(503, {'error': 'Set up the admin password before signing in.'})
             password=body.get('password','')
             if not isinstance(password,str) or len(password)>1024: return self.send(400,{'error':'Invalid password'})
-            candidate=hashlib.scrypt(password.encode(),salt=bytes.fromhex(auth['salt']),n=16384,r=8,p=1).hex()
-            if not hmac.compare_digest(candidate,auth['hash']): return self.send(401,{'error':'Incorrect password.'})
+            if not password_matches(password, auth): return self.send(401,{'error':'Incorrect password.'})
             token = secrets.token_urlsafe(32)
             if store:
                 key = hashlib.sha256(token.encode()).hexdigest()
-                store.runtime_put('session', key, True, now + 28800)
-                store.runtime_delete('attempts', client_ip)
+                store.runtime_put('session', key, {'version': auth.get('version', 0)}, now + 28800)
             else:
-                SESSIONS[token] = now + 28800
-                attempts.clear()
+                SESSIONS[token] = {'expires': now + 28800, 'version': auth.get('version', 0)}
             return self.send(200, {'ok': True}, cookie=f'duel_admin={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800{secure}')
         token=sync_identity or self.session()
         if not token: return self.send(401,{'error':'Admin login required.'})
@@ -460,6 +485,25 @@ class ArchiveRoutes:
                     store.runtime_delete('session', token)
                 else:
                     SESSIONS.pop(token, None)
+                return self.send(200, {'ok': True}, cookie=f'duel_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0{secure}')
+            if path=='/api/admin/password':
+                if password_throttled(client_ip): return self.send(429, {'error': 'Too many password attempts. Please try again later.'})
+                with LOCK:
+                    auth = read('auth.json')
+                    if not password_matches(body.get('current_password'), auth):
+                        return self.send(401, {'error': 'Current password is incorrect.'})
+                    password = body.get('new_password')
+                    if not isinstance(password, str) or not 12 <= len(password) <= 1024:
+                        raise ValueError('New password must be between 12 and 1,024 characters.')
+                    if password != body.get('confirm_password'):
+                        raise ValueError('New passwords do not match.')
+                    if password_matches(password, auth):
+                        raise ValueError('Choose a different new password.')
+                    salt = secrets.token_bytes(16)
+                    save('auth.json', {'salt': salt.hex(), 'hash': hashlib.scrypt(password.encode(), salt=salt, n=16384, r=8, p=1).hex(), 'version': secrets.token_hex(16)})
+                    if not store:
+                        SESSIONS.clear()
+                        STAGED.clear()
                 return self.send(200, {'ok': True}, cookie=f'duel_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0{secure}')
             if path=='/api/admin/artwork-batch':
                 if not store: return self.send(400, {'error': 'Hosted artwork batches require hosted storage.'})
@@ -483,7 +527,9 @@ class ArchiveRoutes:
                 with LOCK:
                     state=read('collection.json'); folders={r['Folder Name'] for r in state['rows']}
                     if not isinstance(visible,list) or any(not isinstance(x,str) or x not in folders for x in visible): raise ValueError('Invalid folder selection. Reload admin and retry.')
-                    state['settings']={'visible_folders':list(dict.fromkeys(visible)),'markup':markup,'currency':currency.strip(),**pricing};state['revision']+=1;save('collection.json',state)
+                    show_prices=body.get('show_prices', state['settings'].get('show_prices', True))
+                    if not isinstance(show_prices, bool): raise ValueError('Price visibility must be true or false.')
+                    state['settings']={'show_prices':show_prices,'visible_folders':list(dict.fromkeys(visible)),'markup':markup,'currency':currency.strip(),**pricing};state['revision']+=1;save('collection.json',state)
                 return self.send(200,{'ok':True})
             if path=='/api/admin/preview':
                 rows=parse_csv(body.get('csv',''))
@@ -510,6 +556,8 @@ class ArchiveRoutes:
                     if state['revision']!=staged[2]: raise ValueError('Collection settings changed. Preview your CSV again.')
                     save('collection.backup.json',state)
                     state['rows']=staged[3];state['revision']+=1
+                    state['csv_updated_at']=time.time()
+                    save('csv-import.json', {'updated_at': state['csv_updated_at']})
                     current={r['Folder Name'] for r in state['rows']}
                     state['settings']['visible_folders']=[f for f in state['settings']['visible_folders'] if f in current]
                     save('collection.json', state)
