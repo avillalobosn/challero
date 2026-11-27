@@ -94,18 +94,17 @@ Environment variables beyond the existing secret ARN and bucket:
 - `SYNC_MIN_ENTRIES=2000`
 - `SYNC_MIN_COPIES=4000`
 - `SYNC_MIN_FOLDERS=20`
-- `SYNC_MAX_REMOVED_COPIES=0` initially (replaces the obsolete `SYNC_MAX_REMOVALS`)
 - `SYNC_IMPORT_ENABLED=false` initially
 
 Run `{"mode":"preview"}` first. It downloads and backs up the CSV and returns
 added/removed counts without committing. The response includes `removed_copies` and `removed_folders`, computed by
 comparing quantities for each card/printing/folder while ignoring all price
 fields, purchase date, and trade quantity. Row-level added/removed counts still
-include price changes for compatibility. The worker guards on physical copies,
-not changed rows, and blocks removal of any existing folder. Folder moves and
-printing/condition corrections count as inventory losses from their old identity
-and require review. A legitimate quantity reduction can be allowed through
-`SYNC_MAX_REMOVED_COPIES` after reviewing the preview.
+include price changes for compatibility. Dragon Shield is the source of truth:
+copy removals, folder moves, condition corrections, and removed folders are
+reported but do not block imports. `SYNC_MAX_REMOVED_COPIES` and
+`SYNC_MAX_REMOVALS` are obsolete and ignored. Absolute minimum counts and the
+10% relative-count completeness guard remain enforced.
 Set `SYNC_IMPORT_ENABLED=true` only after reviewing the preview. Then manually
 run `{"mode":"sync"}` and verify the website before creating any schedule.
 
@@ -140,3 +139,14 @@ Failure responses now report a safe stage and category (for example,
 `inventory-guard / inventory-removal-blocked`, or `acquire-lock / AccessDenied`)
 without raw exception messages, request bodies, or signed URLs. For an uncertain
 import, compare the saved export with the current site before resuming.
+
+
+### Error alarm missing-data behavior
+
+`challero-sync-errors` evaluates the Lambda `Errors` sum over five minutes, while
+the schedule invokes hourly. Use `TreatMissingData=notBreaching` so idle intervals
+do not become INSUFFICIENT_DATA. Actual error datapoints still breach at >=1.
+An OK error alarm is not evidence of a successful recent sync; inspect the
+successful-import state or logs to establish freshness. Keep Scheduler delivery
+failure monitoring separate. The diagnostics IAM profile has read-only access;
+update the alarm and upload Lambda ZIPs manually in the console.

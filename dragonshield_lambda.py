@@ -72,7 +72,6 @@ def handler(event, context):
             'Sync paused; review the previous run before resuming.': 'paused-after-earlier-failure',
             'Export failed completeness guards.': 'incomplete-export',
             'Export dropped more than 10 percent since last successful import.': 'export-count-drop',
-            'Physical copies or folders would be removed; inspect the preview before importing.': 'inventory-removal-blocked',
             'Import was not acknowledged.': 'import-response-uncertain',
         }
         if isinstance(error, ValueError):
@@ -103,8 +102,7 @@ def run(event):
     minimum = int(os.environ.get('SYNC_MIN_ENTRIES', '2000'))
     min_copies = int(os.environ.get('SYNC_MIN_COPIES', '4000'))
     min_folders = int(os.environ.get('SYNC_MIN_FOLDERS', '20'))
-    max_removed_copies = int(os.environ.get('SYNC_MAX_REMOVED_COPIES', '0'))
-    if min(minimum, min_copies, min_folders) < 1 or max_removed_copies < 0:
+    if min(minimum, min_copies, min_folders) < 1:
         raise ValueError('Invalid completeness guards.')
     if mode == 'sync' and os.environ.get('SYNC_IMPORT_ENABLED') != 'true':
         raise ValueError('Imports are disabled.')
@@ -115,13 +113,13 @@ def run(event):
     STAGE.set('acquire-lock')
     with exclusive_run(s3, bucket):
         if mode == 'inspect':
-            return inspect_saved_export(s3, secrets, bucket, secret_arn, minimum, min_copies, min_folders, max_removed_copies)
+            return inspect_saved_export(s3, secrets, bucket, secret_arn, minimum, min_copies, min_folders)
         return process(mode, secret_arn, bucket, minimum, min_copies, min_folders,
-                       max_removed_copies, secrets, s3)
+                       secrets, s3)
 
 
 def process(mode, secret_arn, bucket, minimum, min_copies, min_folders,
-            max_removed_copies, secrets, s3):
+            secrets, s3):
     def save_state(value):
         s3.put_object(Bucket=bucket, Key=STATE_KEY, Body=json.dumps(value).encode(),
                       ContentType='application/json', ServerSideEncryption='AES256')
@@ -180,10 +178,6 @@ def process(mode, secret_arn, bucket, minimum, min_copies, min_folders,
             result.update({k: preview[k] for k in ('added_entries', 'removed_entries', 'added_copies', 'removed_copies', 'removed_folders')})
             if mode == 'preview':
                 result['status'] = 'preview-only'
-            elif preview['removed_copies'] > max_removed_copies or preview['removed_folders']:
-                STAGE.set('inventory-guard')
-                print(json.dumps({'guard': {k: result[k] for k in ('removed_copies', 'removed_folders')}}))
-                raise ValueError('Physical copies or folders would be removed; inspect the preview before importing.')
             elif not preview['added_entries'] and not preview['removed_entries']:
                 result['status'] = 'unchanged-collection'
             else:
@@ -219,7 +213,7 @@ def site_preview(secret, content):
     return http, origin, headers, preview
 
 
-def inspect_saved_export(s3, secrets, bucket, secret_arn, minimum, min_copies, min_folders, max_removed_copies):
+def inspect_saved_export(s3, secrets, bucket, secret_arn, minimum, min_copies, min_folders):
     """Inspect without changing sync state, renewing OAuth, or committing imports."""
     STAGE.set('inspect-state')
     try:
@@ -256,8 +250,6 @@ def inspect_saved_export(s3, secrets, bucket, secret_arn, minimum, min_copies, m
         'minimum_copies': stats['copies'] >= min_copies,
         'minimum_folders': stats['folders'] >= min_folders,
         'relative_counts': all(stats[k] >= previous.get(k, 0) * 0.9 for k in ('entries', 'copies', 'folders')),
-        'physical_removals': preview['removed_copies'] <= max_removed_copies,
-        'folders_preserved': not preview['removed_folders'],
     }
     result = {'status': 'inspection', 'paused': bool(state.get('paused')), 'backup_key': latest,
               **stats, **{k: preview[k] for k in ('added_entries', 'removed_entries', 'added_copies', 'removed_copies', 'removed_folders')},

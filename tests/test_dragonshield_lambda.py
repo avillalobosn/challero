@@ -97,23 +97,25 @@ class LambdaTests(unittest.TestCase):
         self.assertEqual(result['status'], 'unchanged-export')
         http.return_value.json.assert_not_called()
 
-    def test_physical_removal_blocks_commit_and_leaves_paused(self):
+    def test_source_of_truth_import_allows_copy_and_folder_removals(self):
         from botocore.exceptions import ClientError
         secrets, s3, http = Mock(), Mock(), Mock()
         secrets.get_secret_value.return_value = {'SecretString': json.dumps({
             'duel_site_url': 'https://example.com', 'duel_import_token': 'x' * 43})}
         s3.get_object.side_effect = ClientError({'Error': {'Code': 'NoSuchKey'}}, 'GetObject')
-        http.json.return_value = {'added_entries': 100, 'removed_entries': 100,
-                                 'added_copies': 1, 'removed_copies': 1, 'removed_folders': [], 'token': 'preview'}
+        http.json.side_effect = [{'added_entries': 100, 'removed_entries': 100,
+                                 'added_copies': 1, 'removed_copies': 73, 'removed_folders': ['Old folder'], 'token': 'preview'}, {'ok': True}]
         env = {'SYNC_SECRET_ARN': 'secret', 'SYNC_BACKUP_BUCKET': 'bucket', 'SYNC_MIN_ENTRIES': '1',
                'SYNC_MIN_COPIES': '1', 'SYNC_MIN_FOLDERS': '1', 'SYNC_IMPORT_ENABLED': 'true'}
         with patch.dict(os.environ, env), patch.object(worker.boto3, 'client', side_effect=[secrets, s3]), \
                 patch.object(worker.sync, 'download', return_value=sample()), patch.object(worker.sync, 'HTTP', return_value=http):
-            with self.assertRaises(RuntimeError): worker.handler({'mode': 'sync'}, None)
-        self.assertEqual(http.json.call_count, 1)
-        self.assertTrue(http.json.call_args.args[0].endswith('/preview'))
+            result = worker.handler({'mode': 'sync'}, None)
+        self.assertEqual(result['status'], 'imported')
+        self.assertEqual(result['removed_copies'], 73)
+        self.assertEqual(http.json.call_count, 2)
+        self.assertTrue(http.json.call_args.args[0].endswith('/import'))
         states = [json.loads(c.kwargs['Body']) for c in s3.put_object.call_args_list if c.kwargs['Key'] == worker.STATE_KEY]
-        self.assertEqual(states, [{'paused': True}])
+        self.assertFalse(states[-1]['paused'])
 
     def test_inspection_works_while_paused_without_oauth_or_import(self):
         import io
@@ -131,8 +133,8 @@ class LambdaTests(unittest.TestCase):
                 patch.object(worker.sync, 'download') as download, patch.object(worker.sync, 'HTTP', return_value=http):
             result = worker.handler({'mode': 'inspect'}, None)
         self.assertTrue(result['paused'])
-        self.assertFalse(result['import_would_pass_guards'])
-        self.assertFalse(result['guards']['physical_removals'])
+        self.assertTrue(result['import_would_pass_guards'])
+        self.assertNotIn('physical_removals', result['guards'])
         self.assertEqual(result['removed_copies'], 1)
         download.assert_not_called()
         secrets.put_secret_value.assert_not_called()
