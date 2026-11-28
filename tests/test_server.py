@@ -116,6 +116,17 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(loss['removed_copies'], 3)
         self.assertEqual(loss['removed_folders'], ['Secret storage'])
 
+    def test_manual_dragonshield_sync_requires_session_and_valid_origin(self):
+        with patch('manual_sync.invoke', return_value=(200, {'status': 'imported', 'entries': 2, 'copies': 4, 'folders': 2})) as invoke:
+            self.assertEqual(self.call('/api/admin/dragonshield-sync', {})[0], 401)
+            invoke.assert_not_called()
+            self.login()
+            self.assertEqual(self.call('/api/admin/dragonshield-sync', {}, headers={'Origin': 'https://attacker.example'})[0], 403)
+            self.assertEqual(self.call('/api/admin/dragonshield-sync', {'mode': 'resume'})[0], 400)
+            invoke.assert_not_called()
+            self.assertEqual(self.call('/api/admin/dragonshield-sync', {})[0], 200)
+            invoke.assert_called_once()
+
     def test_artwork_batch_requires_admin_and_hosted_storage(self):
         self.assertEqual(self.call('/api/admin/artwork-batch',{})[0],401)
         self.login()

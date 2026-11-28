@@ -2,16 +2,16 @@
 const vm=require('node:vm'),fs=require('node:fs'),assert=require('node:assert/strict');
 const script=fs.readFileSync('public/app.js','utf8');
 async function fixture(admin=false,denied=false,search="",storage=new Map()){
- let copied="", replaced="",batchCalls=0;const requests=[],intervals=[],documentEvents=[];
+ let copied="", replaced="",batchCalls=0,syncResult={status:"imported",entries:3000,copies:4000,folders:20};const requests=[],intervals=[],documentEvents=[];
  const elements=new Map();
  function element(id){if(!elements.has(id))elements.set(id,{id,value:id==='sort'?'name':'',textContent:'',innerHTML:'',hidden:true,checked:false,open:false,options:[{value:'name'},{value:'value'},{value:'Fixture set'},{value:'SR'},{value:'Monster'},{value:'Spanish'},{value:'English'}],classList:{toggle(){}},add(){},addEventListener(){},scrollIntoView(){},focus(){},showModal(){this.open=true},close(){this.open=false}});const result=elements.get(id);if(id==='subtype'&&!result.realSelect){result.realSelect=true;let value='',html='';result.options=[];Object.defineProperty(result,'value',{get:()=>value,set:next=>{value=result.options.some(o=>o.value===next)?next:''}});Object.defineProperty(result,'innerHTML',{get:()=>html,set:next=>{html=next;result.options=[];value=''}});result.add=function(option){this.options.push(option)}}return result}
  const row={copies:2,spanish_name:'Carta de prueba','Folder Name':'Visible folder','Quantity':'2','Trade Quantity':'0','Card Name':'<Test Card>','Set Name':'Fixture set','Card Number':'TEST-EN001','Set Code':'TEST','Rarity':'SR','Language':'English','Condition':'NearMint','Printing':'1st Edition',_id:7,info:{image:'assets/1.jpg',thumbnail:'assets/1-thumb-v2.webp',type:'Effect Monster',desc:'Fixture effect'},public_price:null};
  row.reference_prices={match:'matched',set_price:'77.88',fetched_at:1,stale:true,vendors:[{vendor:'TCGplayer',amount:'66.55',currency:'USD'}]};
  if(admin)Object.assign(row,{'Price Bought':'123.45',LOW:'10.11',MID:'20.22',MARKET:'30.33'});
  const response={admin,rows:[row,{...row,_id:8,Language:'Spanish'}],currency:'USD',revision:1,settings:{visible_folders:['Visible folder'],markup:null,currency:'USD'},folders:{'Visible folder':1},cache:{status:'Ready',failures:{}}};
- const context=vm.createContext({document:{documentElement:{dataset:{}},getElementById:element,querySelector:element,querySelectorAll:()=>[],addEventListener:name=>documentEvents.push(name),activeElement:null},URL,URLSearchParams,location:{pathname:admin?'/admin':'/',href:'http://localhost/'+search,search},localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},navigator:{clipboard:{writeText:async text=>{copied=text;}}},history:{replaceState:(_a,_b,url)=>{replaced=String(url);}},Option:function(text,value){this.text=text;this.value=value},fetch:async path=>{requests.push(path);return ({ok:!denied,status:denied?401:200,json:async()=>denied?{error:'Admin login required.'}:path==='/api/admin/artwork-batch'?{done:++batchCalls>=2,failures:0,message:'Artwork progress'}:response});},setInterval:(...args)=>intervals.push(args),console});
+ const context=vm.createContext({document:{documentElement:{dataset:{}},getElementById:element,querySelector:element,querySelectorAll:()=>[],addEventListener:name=>documentEvents.push(name),activeElement:null},URL,URLSearchParams,location:{pathname:admin?'/admin':'/',href:'http://localhost/'+search,search},localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},navigator:{clipboard:{writeText:async text=>{copied=text;}}},history:{replaceState:(_a,_b,url)=>{replaced=String(url);}},Option:function(text,value){this.text=text;this.value=value},fetch:async path=>{requests.push(path);return ({ok:!denied,status:denied?401:200,json:async()=>denied?{error:'Admin login required.'}:path==='/api/admin/dragonshield-sync'?syncResult:path==='/api/admin/artwork-batch'?{done:++batchCalls>=2,failures:0,message:'Artwork progress'}:response});},setInterval:(...args)=>intervals.push(args),console});
  vm.runInContext(script,context);await new Promise(resolve=>setImmediate(resolve));
- return {context,element,response,storage,requests,intervals,documentEvents,copied:()=>copied,replaced:()=>replaced};
+ return {context,element,response,storage,requests,intervals,documentEvents,setSyncResult:value=>{syncResult=value},copied:()=>copied,replaced:()=>replaced};
 }
 (async()=>{
  const user=await fixture();assert.equal(user.element('stats').hidden,true);assert.equal((user.element('grid').innerHTML.match(/data-id=/g)||[]).length,1);assert.doesNotMatch(user.element('grid').innerHTML,/class="quantity"/);assert.match(user.element('grid').innerHTML,/Super Rare \(SR\)/);assert.equal(user.element('folders').hidden,true);assert.equal(user.element('folderHeading').hidden,true);assert.equal(user.element('folderStat').hidden,true);assert.doesNotMatch(user.element('grid').innerHTML,/Visible folder|card-folder/);assert.match(user.element('grid').innerHTML,/Ask for price/);assert.match(user.element('grid').innerHTML,/&lt;Test Card&gt;/);
@@ -108,6 +108,18 @@ async function fixture(admin=false,denied=false,search="",storage=new Map()){
  admin.response.csv_updated_at=1700000000;
  vm.runInContext('renderAdmin()',admin.context);
  assert.doesNotMatch(admin.element('adminPanel').innerHTML,/Last CSV update: Not recorded yet/);
+ const manual=await fixture(true);
+ assert.match(manual.element('adminPanel').innerHTML,/Sync from Dragon Shield/);
+ await Promise.all([manual.element('dragonshieldSync').onclick(),manual.element('dragonshieldSync').onclick()]);
+ assert.equal(manual.requests.filter(path=>path==='/api/admin/dragonshield-sync').length,1);
+ assert.match(manual.element('message').textContent,/Dragon Shield synced: 3,000 entries/);
+ assert.equal(manual.element('dragonshieldSync').disabled,false);
+ assert.ok(manual.requests.filter(path=>path==='/api/admin').length>=2);
+ manual.setSyncResult({status:'pending',message:'Still running; do not retry.'});
+ await manual.element('dragonshieldSync').onclick();
+ assert.equal(manual.element('dragonshieldSync').disabled,true);
+ assert.match(manual.element('dragonshieldSyncStatus').textContent,/Still running/);
+ assert.doesNotMatch(user.element('adminPanel').innerHTML,/dragonshieldSync/);
  const hiddenPrices=await fixture();
  hiddenPrices.response.show_prices=false;
  vm.runInContext('initialize();openCard(7)',hiddenPrices.context);

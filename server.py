@@ -437,6 +437,16 @@ class ArchiveRoutes:
         else: return self.send(404,{'error':'Not found'})
         if not target.is_file(): return self.send(404,{'error':'Not found'})
         return self.send(200,target.read_bytes(),content_type=content_type if path.startswith('/assets/') else (mimetypes.guess_type(target)[0] or 'application/octet-stream'), extra_headers=image_headers if path.startswith('/assets/') else None)
+    def dragonshield_sync(self, raw_body):
+        try:
+            if json.loads(raw_body) != {}:
+                raise ValueError('Expected an empty request')
+        except (ValueError, TypeError, UnicodeError):
+            return self.send(400, {'error': 'Invalid sync request.'})
+        from manual_sync import invoke
+        status, result = invoke()
+        return self.send(status, result)
+
     def post(self, path, raw_body, client_ip):
         if not 0 < len(raw_body) <= MAX_UPLOAD:
             return self.send(413, {'error': 'Upload must be under 12 MB.'})
@@ -479,6 +489,8 @@ class ArchiveRoutes:
             return self.send(200, {'ok': True}, cookie=f'duel_admin={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800{secure}')
         token=sync_identity or self.session()
         if not token: return self.send(401,{'error':'Admin login required.'})
+        if path == '/api/admin/dragonshield-sync':
+            return self.dragonshield_sync(raw_body)
         try:
             if path=='/api/logout':
                 if store:

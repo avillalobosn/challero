@@ -51,6 +51,18 @@ def hosted_request(database_url, routes, path, body=None, client_ip=None):
     from botocore.exceptions import BotoCoreError, ClientError
 
     try:
+        if path == '/api/admin/dragonshield-sync' and body is not None:
+            # Lambda calls this backend to import. Never hold the collection's
+            # transaction open while waiting for that callback to complete.
+            with transaction(database_url, write=False) as store:
+                token = server.HOSTED_STORE.set(store)
+                try:
+                    authorized = bool(routes.session())
+                finally:
+                    server.HOSTED_STORE.reset(token)
+            if not authorized:
+                return routes.send(401, {'error': 'Admin login required.'})
+            return routes.dragonshield_sync(body)
         with transaction(database_url, write=body is not None,
                          artwork_write=path.startswith('/assets/')) as store:
             token = server.HOSTED_STORE.set(store)

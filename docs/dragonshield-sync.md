@@ -150,3 +150,34 @@ An OK error alarm is not evidence of a successful recent sync; inspect the
 successful-import state or logs to establish freshness. Keep Scheduler delivery
 failure monitoring separate. The diagnostics IAM profile has read-only access;
 update the alarm and upload Lambda ZIPs manually in the console.
+
+## Admin: Sync from Dragon Shield
+
+The admin Update collection panel includes **Sync from Dragon Shield**. It posts
+to `/api/admin/dragonshield-sync` using the existing admin session and origin
+checks. The backend invokes the Lambda with the fixed `{"mode":"sync"}` payload;
+the browser never receives AWS credentials, backup paths, or Dragon Shield tokens.
+The existing Lambda handles token renewal, backups, completeness checks and
+collection replacement. Its S3 lease also serializes manual and scheduled runs.
+
+Create a dedicated IAM identity such as `challero-sync-invoker` with only
+[the invocation policy](sync-invoke-iam-policy.json). Configure these variables
+in Vercel's **Production** environment, then redeploy:
+
+- `DUEL_SYNC_FUNCTION_ARN=arn:aws:lambda:us-east-1:468502414905:function:challero-dragonshield-sync`
+- `DUEL_SYNC_ACCESS_KEY_ID`: the invoker's access key ID
+- `DUEL_SYNC_SECRET_ACCESS_KEY`: the invoker's secret key
+- `DUEL_SYNC_SESSION_TOKEN`: only if using temporary credentials
+
+Enter credentials directly in Vercel; never commit them or paste them in chat.
+Do not use the diagnostics identity or widen its read-only permissions. The
+invoker needs no S3, Secrets Manager, or admin login access. No changes to the
+Lambda execution role, package, or hourly schedule are required.
+
+Hosted authentication is checked in a short read transaction that closes before
+Lambda is invoked. This avoids holding the database lock while Lambda calls the
+website back to preview/import. No automatic SDK retries are configured. Success
+reloads the collection and processes queued artwork while the tab stays open.
+If the response times out, the operation may still complete; the UI reports that
+uncertainty and suppresses duplicate clicks until the page is refreshed. If sync
+is paused or fails a completeness guard, it is not automatically resumed.
