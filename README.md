@@ -153,3 +153,12 @@ In `/admin`, **Show prices to visitors** controls offer prices in the public gri
 **Change admin password** requires the current password and a matching new password of 12–1,024 characters. A successful change invalidates all existing admin sessions; sign in again with the new password. Password checks (sign-in and current-password verification) allow at most five attempts per IP per minute and 30 attempts across the account per 15 minutes. Hosted counters are stored in PostgreSQL and serialized across instances. Local counters are in memory and reset on restart. These limits reduce brute-force attempts; upstream edge rate limits can provide additional protection.
 
 The admin update panel shows **Last CSV update** after a successful manual or sync import, in the browser's local timezone. Older imports without a recorded timestamp show **Not recorded yet** until the next import. Previewing a file or editing settings does not update this timestamp. Include `data/csv-import.json` when backing up local import metadata.
+
+
+Collection sorting includes **Added: newest first** and **Added: oldest first**
+in both admin and visitor views. The CSV's `Date Bought` value is displayed as
+**Date added** (Spanish: **Fecha de ingreso**). Missing or invalid dates sort
+last in both directions. Grouped visitor cards use their newest variant date
+for newest-first sorting and oldest variant date for oldest-first sorting.
+Dates are preserved as calendar dates without timezone conversion. No separate
+first-seen tracking or database migration is needed.

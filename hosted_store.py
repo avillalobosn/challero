@@ -79,7 +79,7 @@ class PostgresStore:
         head=self.connection.execute("SELECT value FROM public.duel_read_heads WHERE name='collection.json'").fetchone()
         state=dict(head[0]) if head else {'settings':{'visible_folders':[],'currency':'USD'},'revision':0}
         visible=state['settings']['visible_folders']
-        entries=self.connection.execute("SELECT position,CASE WHEN %s THEN row_data ELSE row_data - ARRAY['Folder Name','MID','Price Bought','Date Bought']::text[] END "
+        entries=self.connection.execute("SELECT position,CASE WHEN %s THEN row_data ELSE row_data - ARRAY['Folder Name','MID','Price Bought']::text[] END "
             'FROM public.duel_collection_entries WHERE %s OR folder=ANY(%s) ORDER BY position',(admin,admin,visible)).fetchall()
         state['rows']=[row for _,row in entries]
         names=list({row['Card Name'] for _,row in entries})

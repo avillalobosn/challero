@@ -127,6 +127,17 @@ class ArchiveTests(unittest.TestCase):
             self.assertEqual(self.call('/api/admin/dragonshield-sync', {})[0], 200)
             invoke.assert_called_once()
 
+    def test_purchase_date_exposed_as_added_date_without_private_fields(self):
+        self.assertEqual(app.added_date({'Date Bought': '2026-02-29'}), None)
+        self.assertEqual(app.added_date({'Date Bought': ''}), None)
+        self.assertEqual(app.added_date({'Date Bought': '2024-02-29'}), '2024-02-29')
+        public = self.call('/api/collection')[1]['rows'][0]
+        self.assertEqual(public['added_date'], '2026-01-01')
+        self.assertNotIn('Date Bought', public)
+        self.assertNotIn('Price Bought', public)
+        self.login()
+        self.assertEqual(self.call('/api/admin')[1]['rows'][0]['added_date'], '2026-01-01')
+
     def test_artwork_batch_requires_admin_and_hosted_storage(self):
         self.assertEqual(self.call('/api/admin/artwork-batch',{})[0],401)
         self.login()

@@ -13,7 +13,7 @@ const translations = {
     'Browse the collection':'Explora la colección', 'Ask for price':'Consultar precio', 'From':'Desde',
     'Set':'Colección', 'Card number':'Número de carta', 'Rarity':'Rareza', 'Condition':'Estado',
     'Printing':'Edición', 'Language':'Idioma', 'Offer price · per copy':'Precio por copia',
-    'English':'Inglés', 'Spanish':'Español', '1st Edition':'1.ª edición', 'Unlimited':'Ilimitada',
+    'Date added':'Fecha de ingreso', 'Not recorded':'Sin fecha', 'English':'Inglés', 'Spanish':'Español', '1st Edition':'1.ª edición', 'Unlimited':'Ilimitada',
     'NearMint':'Casi nueva', 'LightlyPlayed':'Poco usada', 'ModeratelyPlayed':'Uso moderado',
     'HeavilyPlayed':'Muy usada', 'Damaged':'Dañada', 'Available versions':'Versiones disponibles',
     'Copies':'Copias', 'Show images':'Mostrar imágenes', 'Card details':'Detalles de la carta', 'View':'Ver', 'cards':'cartas'
@@ -57,6 +57,8 @@ function groupCards(items) {
         return {
             ...first,
             copies: variants.reduce((sum, r) => sum + Number(r.copies || 0), 0),
+            added_date: variants.map(r=>r.added_date).filter(Boolean).sort().at(-1)||null,
+            oldest_added_date: variants.map(r=>r.added_date).filter(Boolean).sort()[0]||null,
             public_price: prices.size ? lowest : null,
             price_varies: prices.size > 1 || (prices.size > 0 && variants.some(r => r.public_price == null)),
             rarities: [...new Set(variants.map(r => r.Rarity))]
@@ -96,7 +98,9 @@ function localizeVisitor() {
         ['#creditsLabel','Card data & artwork:','Datos e imágenes:'],
         ['#artNote','· Representative card artwork.','· Imagen representativa de la carta.'],
         ['#sort option[value="name"]','Name: A–Z','Nombre: A–Z'],
-        ['#sort option[value="value"]','Price: high–low','Precio: de mayor a menor']
+        ['#sort option[value="value"]','Price: high–low','Precio: de mayor a menor'],
+        ['#sort option[value="added-newest"]','Added: newest first','Añadidas: más recientes'],
+        ['#sort option[value="added-oldest"]','Added: oldest first','Añadidas: más antiguas']
     ]) {
         const element = document.querySelector(selector);
         if (element) element.textContent = spanish ? es : en;
@@ -186,6 +190,14 @@ function update() {
     );
     filtered = payload.admin ? items : groupCards(items);
     filtered.sort((a,b) => {
+        if (['added-newest','added-oldest'].includes($('sort').value)) {
+            const oldest=$('sort').value==='added-oldest';
+            const da=(oldest?a.oldest_added_date||a.added_date:a.added_date)||'', db=(oldest?b.oldest_added_date||b.added_date:b.added_date)||'';
+            if(!da&&db)return 1;
+            if(da&&!db)return -1;
+            const difference=oldest?da.localeCompare(db):db.localeCompare(da);
+            if(difference)return difference;
+        }
         if ($('sort').value === 'quantity' && payload.admin) return Number(b.Quantity) - Number(a.Quantity);
         if ($('sort').value === 'value') return Number(b.public_price || 0) - Number(a.public_price || 0);
         return cardName(a).localeCompare(cardName(b), language);
@@ -331,11 +343,11 @@ function visitorDetails(r) {
     for (const item of rows.filter(item => groupKey(item) === groupKey(r))) {
         const fields = [
             item['Card Number'], rarityLabel(item.Rarity), t(item.Printing),
-            t(item.Language), t(item.Condition), ...(payload.show_prices!==false?[offer(item)]:[])
+            t(item.Language), t(item.Condition), item.added_date||t('Not recorded'), ...(payload.show_prices!==false?[offer(item)]:[])
         ];
         variants.set(JSON.stringify(fields), fields);
     }
-    const labels = ['Card number','Rarity','Printing','Language','Condition','Offer price · per copy'];
+    const labels = ['Card number','Rarity','Printing','Language','Condition','Date added','Offer price · per copy'];
     const details = [...variants.values()].map(fields =>
         `<dl class="public-variant">${fields.map((value,index)=>`<div><dt>${t(labels[index])}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>`
     ).join('');
@@ -345,7 +357,7 @@ function visitorDetails(r) {
         <h3>${t('Available versions')}</h3>${details}
         </div></div>`;
 }
-function openCard(id){const r=rows.find(x=>x._id===id);if(!r)return;if(!payload.admin){lastFocus=document.activeElement;$('detailContent').innerHTML=visitorDetails(r);fallbackImages();if(!$('detail').open)$('detail').showModal();$('detail').scrollTop=0;return;}const c=r.info;lastFocus=document.activeElement;const attrs=['attribute','race','level','linkval','atk','def'].filter(k=>c[k]!=null).map(k=>`<span>${({level:'LEVEL ',linkval:'LINK ',atk:'ATK ',def:'DEF '})[k]||''}${esc(c[k])}</span>`).join('');const fields=[...(payload.admin?[['Folder',r['Folder Name']]]:[]),['Set',r['Set Name']],['Card number',r['Card Number']],['Rarity',rarityLabel(r.Rarity)],['Condition',r.Condition],['Printing',r.Printing],['Language',r.Language],['Owned / Trade',`${r.Quantity} / ${r['Trade Quantity']}`],['Offer price · per copy',r.public_price===null?'Ask for price':offer(r)],...(payload.admin? [['Date bought',r['Date Bought']||'Not recorded'],['Bought · per copy',price(r['Price Bought'])],['CSV low / mid',`${price(r.LOW)} / ${price(r.MID)}`],['CSV market · per copy',price(r.MARKET)]]:[])];const other=rows.filter(x=>x['Card Name']===r['Card Name']&&x._id!==id);
+function openCard(id){const r=rows.find(x=>x._id===id);if(!r)return;if(!payload.admin){lastFocus=document.activeElement;$('detailContent').innerHTML=visitorDetails(r);fallbackImages();if(!$('detail').open)$('detail').showModal();$('detail').scrollTop=0;return;}const c=r.info;lastFocus=document.activeElement;const attrs=['attribute','race','level','linkval','atk','def'].filter(k=>c[k]!=null).map(k=>`<span>${({level:'LEVEL ',linkval:'LINK ',atk:'ATK ',def:'DEF '})[k]||''}${esc(c[k])}</span>`).join('');const fields=[...(payload.admin?[['Folder',r['Folder Name']]]:[]),['Set',r['Set Name']],['Card number',r['Card Number']],['Rarity',rarityLabel(r.Rarity)],['Condition',r.Condition],['Printing',r.Printing],['Language',r.Language],['Owned / Trade',`${r.Quantity} / ${r['Trade Quantity']}`],['Offer price · per copy',r.public_price===null?'Ask for price':offer(r)],...(payload.admin? [['Date added',r.added_date||'Not recorded'],['Bought · per copy',price(r['Price Bought'])],['CSV low / mid',`${price(r.LOW)} / ${price(r.MID)}`],['CSV market · per copy',price(r.MARKET)]]:[])];const other=rows.filter(x=>x['Card Name']===r['Card Name']&&x._id!==id);
 $('detailContent').innerHTML=`<div class="detail-layout"><div>${image(r,'detail-img')}<p class="detail-note">Representative artwork. Your edition and condition are listed alongside.</p></div><div><div class="type-tag">${esc(c.type||'CARD DETAILS')}</div><h2>${esc(r['Card Name'])}</h2><div class="attributes">${attrs}</div><p class="effect">${esc(c.desc||'Effect text is unavailable for this card. Your collection details are shown below.')}</p><dl>${fields.map(([k,v])=>`<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>${referenceSection(r)}<p class="detail-note">${payload.admin?'Offers use CSV LOW / MARKET, the minimum USD price and the configured conversion rate.':'Price shown is the offered price per copy.'}</p>${other.length?`<h3>Other entries in your collection (${other.length})</h3>${other.map(x=>`<button class="other" data-other="${x._id}">${esc(x['Card Number'])}${payload.admin?' · '+esc(x['Folder Name']):''} · ×${x.Quantity}</button>`).join('')}`:''}</div></div>`;fallbackImages();if(!$('detail').open)$('detail').showModal();$('detail').scrollTop=0;}
 $('detailContent').onclick=e=>{const b=e.target.closest('[data-other]');if(b)openCard(+b.dataset.other)};$('close').onclick=()=>$('detail').close();$('detail').addEventListener('close',()=>lastFocus?.focus());$('detail').onclick=e=>{if(e.target===$('detail')){const r=$('detail').getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)$('detail').close()}};
 

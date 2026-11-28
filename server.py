@@ -202,6 +202,7 @@ def collection_payload(admin=False):
             if not admin and not store and r['Folder Name'] not in visible: continue
             item = dict(r) if admin else {k:r[k] for k in PUBLIC_FIELDS}
             info = dict(cache['cards'].get(r['Card Name'], {}))
+            item['added_date'] = added_date(r)
             item['spanish_name'] = spanish_names.get(str(info.get('id')), '')
             item['copies'] = int(r.get('Quantity') or 0)
             item['available_to_trade'] = int(r.get('Trade Quantity') or 0) > 0
@@ -228,6 +229,17 @@ def collection_payload(admin=False):
             response.update(csv_updated_at=read('csv-import.json', {}).get('updated_at', state.get('csv_updated_at')), settings=state['settings'], folders=dict(Counter(r['Folder Name'] for r in state['rows'])), cache={k:v for k,v in cache.items() if k!='cards'})
         if cache_key is not None: COLLECTION_CACHE.put(cache_key,response)
         return response
+
+def added_date(row):
+    from datetime import date
+    value = row.get('Date Bought', '')
+    if not isinstance(value, str) or len(value) != 10 or value[4] != '-' or value[7] != '-':
+        return None
+    try:
+        return date.fromisoformat(value).isoformat()
+    except ValueError:
+        return None
+
 
 def summarize(old, new):
     def identities(rows): return Counter(tuple(r[k] for k in HEADERS) for r in rows)

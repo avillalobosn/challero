@@ -4,7 +4,7 @@ const script=fs.readFileSync('public/app.js','utf8');
 async function fixture(admin=false,denied=false,search="",storage=new Map()){
  let copied="", replaced="",batchCalls=0,syncResult={status:"imported",entries:3000,copies:4000,folders:20};const requests=[],intervals=[],documentEvents=[];
  const elements=new Map();
- function element(id){if(!elements.has(id))elements.set(id,{id,value:id==='sort'?'name':'',textContent:'',innerHTML:'',hidden:true,checked:false,open:false,options:[{value:'name'},{value:'value'},{value:'Fixture set'},{value:'SR'},{value:'Monster'},{value:'Spanish'},{value:'English'}],classList:{toggle(){}},add(){},addEventListener(){},scrollIntoView(){},focus(){},showModal(){this.open=true},close(){this.open=false}});const result=elements.get(id);if(id==='subtype'&&!result.realSelect){result.realSelect=true;let value='',html='';result.options=[];Object.defineProperty(result,'value',{get:()=>value,set:next=>{value=result.options.some(o=>o.value===next)?next:''}});Object.defineProperty(result,'innerHTML',{get:()=>html,set:next=>{html=next;result.options=[];value=''}});result.add=function(option){this.options.push(option)}}return result}
+ function element(id){if(!elements.has(id))elements.set(id,{id,value:id==='sort'?'name':'',textContent:'',innerHTML:'',hidden:true,checked:false,open:false,options:[{value:'name'},{value:'value'},{value:'added-newest'},{value:'added-oldest'},{value:'Fixture set'},{value:'SR'},{value:'Monster'},{value:'Spanish'},{value:'English'}],classList:{toggle(){}},add(){},addEventListener(){},scrollIntoView(){},focus(){},showModal(){this.open=true},close(){this.open=false}});const result=elements.get(id);if(id==='subtype'&&!result.realSelect){result.realSelect=true;let value='',html='';result.options=[];Object.defineProperty(result,'value',{get:()=>value,set:next=>{value=result.options.some(o=>o.value===next)?next:''}});Object.defineProperty(result,'innerHTML',{get:()=>html,set:next=>{html=next;result.options=[];value=''}});result.add=function(option){this.options.push(option)}}return result}
  const row={copies:2,spanish_name:'Carta de prueba','Folder Name':'Visible folder','Quantity':'2','Trade Quantity':'0','Card Name':'<Test Card>','Set Name':'Fixture set','Card Number':'TEST-EN001','Set Code':'TEST','Rarity':'SR','Language':'English','Condition':'NearMint','Printing':'1st Edition',_id:7,info:{image:'assets/1.jpg',thumbnail:'assets/1-thumb-v2.webp',type:'Effect Monster',desc:'Fixture effect'},public_price:null};
  row.reference_prices={match:'matched',set_price:'77.88',fetched_at:1,stale:true,vendors:[{vendor:'TCGplayer',amount:'66.55',currency:'USD'}]};
  if(admin)Object.assign(row,{'Price Bought':'123.45',LOW:'10.11',MID:'20.22',MARKET:'30.33'});
@@ -120,6 +120,25 @@ async function fixture(admin=false,denied=false,search="",storage=new Map()){
  assert.equal(manual.element('dragonshieldSync').disabled,true);
  assert.match(manual.element('dragonshieldSyncStatus').textContent,/Still running/);
  assert.doesNotMatch(user.element('adminPanel').innerHTML,/dragonshieldSync/);
+ const dated=await fixture();
+ vm.runInContext(`rows=[
+   {...rows[0],_id:11,'Card Name':'Older',added_date:'2026-01-01'},
+   {...rows[0],_id:12,'Card Name':'Newer',added_date:'2026-11-28'},
+   {...rows[0],_id:13,'Card Name':'Unknown',added_date:null}
+ ];`,dated.context);
+ dated.element('sort').value='added-newest';vm.runInContext('update()',dated.context);
+ assert.deepEqual(Array.from(vm.runInContext('filtered.map(r=>r._id)',dated.context)),[12,11,13]);
+ dated.element('sort').value='added-oldest';vm.runInContext('update()',dated.context);
+ assert.deepEqual(Array.from(vm.runInContext('filtered.map(r=>r._id)',dated.context)),[11,12,13]);
+ vm.runInContext('openCard(12)',dated.context);
+ assert.match(dated.element('detailContent').innerHTML,/Date added/);
+ assert.match(dated.element('detailContent').innerHTML,/2026-11-28/);
+ dated.element('language').onclick();vm.runInContext('openCard(12)',dated.context);
+ assert.match(dated.element('detailContent').innerHTML,/Fecha de ingreso/);
+ const groupedDates=vm.runInContext(`groupCards([{...rows[0],added_date:'2026-01-01'},{...rows[0],added_date:'2026-11-28'}])[0]`,dated.context);
+ assert.equal(groupedDates.added_date,'2026-11-28');assert.equal(groupedDates.oldest_added_date,'2026-01-01');
+ const addedLink=await fixture(false,false,'?sort=added-newest');
+ assert.equal(addedLink.element('sort').value,'added-newest');
  const hiddenPrices=await fixture();
  hiddenPrices.response.show_prices=false;
  vm.runInContext('initialize();openCard(7)',hiddenPrices.context);
